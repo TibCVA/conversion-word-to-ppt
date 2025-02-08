@@ -27,7 +27,7 @@ jobs:
           python convert.py input.docx output.pptx
 
       - name: Upload PPT as artifact
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v3
         with:
           name: presentation
           path: output.pptx
