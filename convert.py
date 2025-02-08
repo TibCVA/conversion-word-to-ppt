@@ -1,40 +1,13 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
-"""
-Conversion d'un document Word (.docx) en présentation PowerPoint (.pptx)
-en utilisant un template existant (template_CVA.pptx).
-
-Le document Word doit respecter la structure suivante :
-  • Chaque slide commence par une ligne "SLIDE X"
-  • Une ligne "Titre :" suivie du titre
-  • Une ligne "Sous-titre / Message clé :" suivie du sous‑titre
-  • Le reste (paragraphes, listes, …) constitue le contenu
-
-Le template PowerPoint doit contenir deux layouts :
-  • "Diapositive de titre" (pour la slide 0) qui comporte des placeholders
-    – Celui dont le texte par défaut contient "PROJECT TITLE" (ou index 11) recevra le titre
-    – Celui dont le texte par défaut contient "CVA Presentation title" (ou index 13) recevra le sous‑titre
-  • "Slide_standard layout" (pour les slides 1+) qui comporte des placeholders
-    – Un placeholder avec le texte "Click to edit Master title style" pour le titre
-    – Un placeholder avec le texte "[Optional subtitle]" pour le sous‑titre
-    – Un placeholder avec le texte "Modifiez les styles du texte du masque" pour le contenu,
-      auquel on injecte le texte du Word en conservant le formatage.
-
-Usage :
-  python convert.py input.docx output.pptx
-
-Le fichier template_CVA.pptx doit se trouver dans le même dossier que ce script.
-"""
-
 import sys
 import os
 from docx import Document
 from pptx import Presentation
 from pptx.util import Pt
+import logging
 
-# -----------------------------
-# Extraction du contenu du Word
-# -----------------------------
+# Configuration du logging
+logging.basicConfig(level=logging.INFO)
+
 def parse_docx_to_slides(doc_path):
     doc = Document(doc_path)
     slides_data = []
@@ -61,15 +34,12 @@ def parse_docx_to_slides(doc_path):
             current_slide["blocks"].append(("paragraph", para))
     if current_slide is not None:
         slides_data.append(current_slide)
-    # Debug: Afficher le contenu extrait
-    print("Contenu extrait du Word:")
+
+    logging.info("Contenu extrait du Word:")
     for i, slide in enumerate(slides_data):
-        print(f"Slide {i} - Titre: {slide['title']} | Sous-titre: {slide['subtitle']} | Nb de blocs: {len(slide['blocks'])}")
+        logging.info(f"Slide {i} - Titre: {slide['title']} | Sous-titre: {slide['subtitle']} | Nb de blocs: {len(slide['blocks'])}")
     return slides_data
 
-# -----------------------------
-# Gestion des listes et mise en forme
-# -----------------------------
 def get_list_type(paragraph):
     xml = paragraph._p.xml
     if 'w:numFmt val="bullet"' in xml:
@@ -115,74 +85,45 @@ def add_paragraph_with_runs(text_frame, paragraph, counters):
                 r.font.size = Pt(14)
     return new_p
 
-# -----------------------------
-# Remplissage des placeholders pour la slide de couverture
-# -----------------------------
 def fill_cover_slide(slide, slide_data):
-    print("Placeholders dans la slide de couverture:")
+    logging.info("Placeholders dans la slide de couverture:")
     for ph in slide.placeholders:
-        try:
-            idx = ph.placeholder_format.idx
-        except Exception:
-            idx = "n/a"
-        print(f" - Index {idx}: '{ph.text}'")
-    try:
-        # Selon votre debug, on souhaite que :
-        # Le placeholder d'index 11 contienne le titre
-        slide.placeholders[11].text = slide_data["title"]
-        print("Placeholder 11 mis à jour avec le titre:", slide_data["title"])
-    except Exception as e:
-        print("Erreur lors de l'insertion dans le placeholder index 11:", e)
-    try:
-        # Le placeholder d'index 13 contiendra le sous-titre
-        slide.placeholders[13].text = slide_data["subtitle"]
-        print("Placeholder 13 mis à jour avec le sous-titre:", slide_data["subtitle"])
-    except Exception as e:
-        print("Erreur lors de l'insertion dans le placeholder index 13:", e)
+        logging.info(f" - Nom: {ph.name}, Texte: '{ph.text}'")
 
-# -----------------------------
-# Remplissage des placeholders pour les slides standards
-# -----------------------------
+    # Utilisation des noms des placeholders
+    for ph in slide.placeholders:
+        if "PROJECT TITLE" in ph.text:
+            ph.text = slide_data["title"]
+            logging.info("Placeholder 'PROJECT TITLE' mis à jour avec le titre:", slide_data["title"])
+        elif "CVA Presentation title" in ph.text:
+            ph.text = slide_data["subtitle"]
+            logging.info("Placeholder 'CVA Presentation title' mis à jour avec le sous-titre:", slide_data["subtitle"])
+
 def fill_standard_slide(slide, slide_data):
-    print("Placeholders dans une slide standard:")
+    logging.info("Placeholders dans une slide standard:")
     for ph in slide.placeholders:
-        try:
-            idx = ph.placeholder_format.idx
-        except Exception:
-            idx = "n/a"
-        print(f" - Index {idx}: '{ph.text}'")
-    try:
-        # Pour le titre : placeholder index 3 doit recevoir le titre
-        slide.placeholders[3].text = slide_data["title"]
-        print("Placeholder 3 mis à jour avec le titre:", slide_data["title"])
-    except Exception as e:
-        print("Erreur pour le titre (index 3):", e)
-    try:
-        # Pour le sous-titre : placeholder index 2 doit recevoir le sous-titre
-        slide.placeholders[2].text = slide_data["subtitle"]
-        print("Placeholder 2 mis à jour avec le sous-titre:", slide_data["subtitle"])
-    except Exception as e:
-        print("Erreur pour le sous-titre (index 2):", e)
-    try:
-        # Pour le contenu : placeholder index 7
-        ph_content = slide.placeholders[7]
-        ph_content.text_frame.clear()
-        counters = {}
-        for (block_type, block_para) in slide_data["blocks"]:
-            if block_type == "paragraph":
-                add_paragraph_with_runs(ph_content.text_frame, block_para, counters)
-        print("Placeholder 7 rempli avec le contenu.")
-    except Exception as e:
-        print("Erreur pour le contenu (index 7):", e)
+        logging.info(f" - Nom: {ph.name}, Texte: '{ph.text}'")
 
-# -----------------------------
-# Fonction principale de conversion
-# -----------------------------
+    # Utilisation des noms des placeholders
+    for ph in slide.placeholders:
+        if "Click to edit Master title style" in ph.text:
+            ph.text = slide_data["title"]
+            logging.info("Placeholder 'Click to edit Master title style' mis à jour avec le titre:", slide_data["title"])
+        elif "[Optional subtitle]" in ph.text:
+            ph.text = slide_data["subtitle"]
+            logging.info("Placeholder '[Optional subtitle]' mis à jour avec le sous-titre:", slide_data["subtitle"])
+        elif "Modifiez les styles du texte du masque" in ph.text:
+            ph.text_frame.clear()
+            counters = {}
+            for (block_type, block_para) in slide_data["blocks"]:
+                if block_type == "paragraph":
+                    add_paragraph_with_runs(ph.text_frame, block_para, counters)
+            logging.info("Placeholder 'Modifiez les styles du texte du masque' rempli avec le contenu.")
+
 def create_ppt_from_docx(input_docx, template_pptx, output_pptx):
     slides_data = parse_docx_to_slides(input_docx)
     prs = Presentation(template_pptx)
 
-    # Recherche des layouts par nom
     cover_layout = None
     standard_layout = None
     for layout in prs.slide_layouts:
@@ -195,26 +136,21 @@ def create_ppt_from_docx(input_docx, template_pptx, output_pptx):
     if not standard_layout:
         standard_layout = prs.slide_layouts[1]
 
-    # Créer la slide de couverture (slide 0)
     if slides_data:
         slide0 = prs.slides.add_slide(cover_layout)
-        print("=== Traitement de la slide 0 ===")
+        logging.info("=== Traitement de la slide 0 ===")
         fill_cover_slide(slide0, slides_data[0])
     else:
-        print("Aucune slide trouvée dans le document Word.")
+        logging.warning("Aucune slide trouvée dans le document Word.")
 
-    # Créer les slides standards (slides 1 à N)
     for idx, slide_data in enumerate(slides_data[1:], start=1):
         slide = prs.slides.add_slide(standard_layout)
-        print(f"=== Traitement de la slide {idx} ===")
+        logging.info(f"=== Traitement de la slide {idx} ===")
         fill_standard_slide(slide, slide_data)
 
     prs.save(output_pptx)
-    print("Conversion terminée :", output_pptx)
+    logging.info("Conversion terminée :", output_pptx)
 
-# -----------------------------
-# Point d'entrée
-# -----------------------------
 if __name__ == "__main__":
     if len(sys.argv) != 3:
         print("Usage : python convert.py input.docx output.pptx")
