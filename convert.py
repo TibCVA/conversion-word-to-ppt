@@ -19,7 +19,7 @@ Le template contient :
        "[Optional subtitle]" (sous-titre) et
        "Modifiez les styles du texte du masque…" (body)
 
-Ce script insère le contenu dans ces zones.
+Ce script insère le contenu dans ces zones en essayant de préserver la mise en forme (puces, numérotation, gras, souligné, etc.).
 """
 
 import sys
@@ -27,7 +27,7 @@ import os
 from docx import Document
 from pptx import Presentation
 from pptx.util import Inches, Pt
-from pptx.enum.shapes import MSO_PLACEHOLDER_TYPE  # Utilisez MSO_PLACEHOLDER_TYPE au lieu de MSO_PLACEHOLDER
+from pptx.enum.shapes import MSO_PLACEHOLDER  # Utilisation de MSO_PLACEHOLDER
 
 def get_list_type(paragraph):
     """
@@ -95,7 +95,7 @@ def add_paragraph_with_runs(text_frame, paragraph, counters):
     Si le paragraphe est en liste, préfixe avec :
       - "• " pour une liste à puces,
       - ou avec un numéro (calculé par niveau) pour une liste numérotée.
-    La variable 'counters' est un dictionnaire qui maintient le compte par niveau.
+    'counters' est un dictionnaire qui maintient le compte par niveau.
     """
     p = text_frame.add_paragraph()
     list_type = get_list_type(paragraph)
@@ -127,7 +127,7 @@ def add_paragraph_with_runs(text_frame, paragraph, counters):
 
 def clear_all_placeholders(slide):
     """
-    Efface le texte de tous les placeholders de la diapositive pour éviter d'afficher le texte par défaut.
+    Efface le texte de tous les placeholders de la diapositive afin d'éviter d'afficher le texte par défaut.
     """
     for shape in slide.placeholders:
         try:
@@ -138,9 +138,12 @@ def clear_all_placeholders(slide):
 def fill_placeholders(slide, slide_data, slide_index):
     """
     Remplit les placeholders de la diapositive avec le contenu extrait du Word.
-    Pour SLIDE 0, on s'attend à remplir "PROJECT TITLE", "CVA Presentation title" et "Subtitle".
-    Pour les SLIDES 1+, on remplace "Click to edit Master title style" (titre),
-    "[Optional subtitle]" (sous-titre) et le placeholder BODY (commençant par "Modifiez les styles du texte du masque").
+    Pour SLIDE 0, on remplace les placeholders "PROJECT TITLE", "CVA Presentation title" et "Subtitle".
+    Pour SLIDES 1+, on remplace :
+      - le placeholder de titre (contenant "Click to edit Master title style") par le titre,
+      - le placeholder de sous-titre (contenant "[Optional subtitle]") par le sous-titre,
+      - le placeholder de contenu (celui dont le texte par défaut débute par "Modifiez les styles du texte du masque") par le contenu.
+    Les autres placeholders (notes, sources, numéros) restent intacts.
     """
     if slide_index == 0:
         for shape in slide.placeholders:
@@ -153,7 +156,6 @@ def fill_placeholders(slide, slide_data, slide_index):
                 shape.text = slide_data["title"]
             elif txt == "Subtitle":
                 shape.text = slide_data["subtitle"]
-            # Laisser "Date" inchangé.
     else:
         for shape in slide.placeholders:
             if not shape.has_text_frame:
@@ -169,12 +171,11 @@ def fill_placeholders(slide, slide_data, slide_index):
                 counters = {}
                 for para in slide_data["blocks"]:
                     add_paragraph_with_runs(tf, para, counters)
-            # Les placeholders pour notes, sources et numéros de page ne sont pas modifiés.
 
 def create_ppt_from_docx(doc_path, template_path, output_path):
     """
-    Crée une présentation PowerPoint à partir du document Word et du template.
-    Intègre le contenu du Word dans les placeholders du template.
+    Crée une présentation PowerPoint à partir du document Word et du template,
+    en insérant le contenu dans les placeholders existants.
     """
     slides_data = parse_docx_to_slides(doc_path)
     prs = Presentation(template_path)
