@@ -9,16 +9,20 @@ Structure attendue du fichier Word (input.docx) :
   - Chaque slide commence par une ligne "SLIDE X" (ex. : "SLIDE 1")
   - Une ligne "Titre :" définit le titre
   - Une ligne "Sous-titre / Message clé :" définit le sous-titre
-  - Le reste du texte constitue le contenu de la slide
+  - Le reste du texte constitue le contenu de la slide,
+    qui peut contenir des paragraphes en liste (à puces ou numérotés) et des tableaux.
 
 La première slide utilisera le layout index 0 du template (template_CVA.pptx),
-les suivantes utiliseront le layout index 1.
+les suivantes le layout index 1.
 
-Le script tente de :
-  • Garder tout le contenu d'une slide sur la même diapositive.
-  • Reproduire les bullet points et la numérotation.
-  • Conserver le formatage des runs (gras, souligné, etc.).
-  • Effacer le texte par défaut issu des placeholders du master.
+Ce script tente de :
+  • Regrouper tout le contenu d'une slide sur une seule diapositive.
+  • Reproduire le type de liste :  
+      - Si le paragraphe est une liste à puces (w:numFmt val="bullet"), préfixer avec "• ".
+      - Si c'est une liste numérotée (w:numFmt val="decimal"), préfixer avec un numéro basé sur le niveau.
+  • Conserver le formatage des runs (gras, souligné, taille, etc.).
+  • Copier les tableaux en recréant la structure.
+  • Effacer complètement les placeholders par défaut du master.
 """
 
 import sys
@@ -27,20 +31,24 @@ from docx import Document
 from pptx import Presentation
 from pptx.util import Inches, Pt
 
-def is_bullet(paragraph):
+def get_list_type(paragraph):
     """
-    Retourne True si le paragraphe semble être en liste (détecte la présence
-    du tag <w:numPr> ou si le style du paragraphe contient "List" ou "Bullet").
+    Retourne "bullet" si le paragraphe utilise une puce,
+    "decimal" s'il est numéroté, ou None sinon.
+    Pour cela, on inspecte le XML du paragraphe.
     """
-    style_name = paragraph.style.name if paragraph.style else ""
-    if "bullet" in style_name.lower() or "list" in style_name.lower():
-        return True
-    return "<w:numPr>" in paragraph._p.xml
+    xml = paragraph._p.xml
+    if 'w:numFmt val="bullet"' in xml:
+        return "bullet"
+    elif 'w:numFmt val="decimal"' in xml:
+        return "decimal"
+    else:
+        return None
 
 def get_indentation_level(paragraph):
     """
-    Estime le niveau d'indentation à partir de paragraph_format.left_indent.
-    On considère qu'environ 0.25 inch correspond à 1 niveau.
+    Estime le niveau d'indentation basé sur left_indent.
+    On considère environ 0.25 inch par niveau.
     """
     indent = paragraph.paragraph_format.left_indent
     if indent is None:
@@ -53,10 +61,10 @@ def get_indentation_level(paragraph):
 def parse_docx_to_slides(doc_path):
     """
     Lit le document Word et découpe son contenu en slides.
-    Retourne une liste de dictionnaires, chacun ayant :
+    Retourne une liste de dictionnaires, chacun contenant :
       - "title" : texte après "Titre :"
       - "subtitle" : texte après "Sous-titre / Message clé :"
-      - "blocks" : liste d'objets Paragraph (tout le contenu de la slide)
+      - "blocks" : liste d'objets Paragraph (pour le texte) ou Table (pour les tableaux)
     """
     doc = Document(doc_path)
     slides = []
@@ -65,7 +73,7 @@ def parse_docx_to_slides(doc_path):
         txt = para.text.strip()
         if not txt:
             continue
-        # Détection d'un marqueur de nouvelle slide
+        # Nouvelle slide détectée
         if txt.upper().startswith("SLIDE"):
             if current_slide is not None:
                 slides.append(current_slide)
@@ -87,28 +95,28 @@ def parse_docx_to_slides(doc_path):
 
 def add_paragraph_with_runs(text_frame, paragraph, counters):
     """
-    Ajoute un paragraphe dans le text_frame en copiant ses runs pour conserver le formatage.
+    Ajoute un paragraphe dans le text_frame en copiant ses runs.
     Si le paragraphe est en liste, préfixe avec :
-      - "• " pour une liste à puces (si le style contient "bullet"),
-      - ou avec un numéro pour une liste numérotée, en se basant sur le niveau d'indentation.
-    La variable counters (dictionnaire) maintient le compte par niveau d'indentation.
+      - "• " pour une liste à puces,
+      - ou avec un numéro (basé sur le niveau) pour une liste numérotée.
+    La variable counters est un dictionnaire qui conserve le compte par niveau.
     """
     p = text_frame.add_paragraph()
-    style_name = paragraph.style.name if paragraph.style else ""
-    if is_bullet(paragraph):
-        # Liste à puces ou numérotée
-        if "bullet" in style_name.lower():
-            prefix = "• "
-        else:
-            level = get_indentation_level(paragraph)
-            count = counters.get(level, 0) + 1
-            counters[level] = count
-            prefix = f"{count}. "
-        # On ajoute le préfixe suivi du texte du paragraphe
-        p.text = prefix + paragraph.text
-        p.level = get_indentation_level(paragraph)
+    list_type = get_list_type(paragraph)
+    level = get_indentation_level(paragraph)
+    if list_type == "bullet":
+        # Conserver le bullet
+        p.text = "• " + paragraph.text
+        p.level = level
+        return p
+    elif list_type == "decimal":
+        count = counters.get(level, 0) + 1
+        counters[level] = count
+        p.text = f"{count}. " + paragraph.text
+        p.level = level
         return p
     else:
+        # Copie simple des runs pour respecter le formatage
         for run in paragraph.runs:
             r = p.add_run()
             r.text = run.text
@@ -123,8 +131,27 @@ def add_paragraph_with_runs(text_frame, paragraph, counters):
             p.alignment = paragraph.alignment
         return p
 
+def add_table(slide, table, left, top, width, height):
+    """
+    Ajoute un tableau sur la diapositive en recréant la structure.
+    Pour chaque cellule, concatène les paragraphes (avec retour à la ligne).
+    Note : La reproduction exacte du formatage de tableau est limitée.
+    """
+    rows = len(table.rows)
+    cols = len(table.columns)
+    shape = slide.shapes.add_table(rows, cols, left, top, width, height)
+    ppt_table = shape.table
+    for i, row in enumerate(table.rows):
+        for j, cell in enumerate(row.cells):
+            cell_text = "\n".join(p.text for p in cell.paragraphs)
+            ppt_table.cell(i, j).text = cell_text
+    return shape
+
 def clear_placeholders(slide):
-    """Efface le texte des placeholders par défaut sur la diapositive."""
+    """
+    Supprime ou efface les zones de texte des placeholders du master afin qu'ils ne soient pas visibles.
+    Ici, nous parcourons les formes et si elles sont des placeholders, on les masque.
+    """
     for shape in slide.shapes:
         if hasattr(shape, "is_placeholder") and shape.is_placeholder:
             try:
@@ -134,12 +161,12 @@ def clear_placeholders(slide):
 
 def create_ppt_from_docx(doc_path, template_path, output_path):
     """
-    Crée une présentation PowerPoint à partir d'un document Word et d'un template.
+    Crée une présentation PowerPoint à partir du document Word et d'un template.
     Pour chaque slide, ajoute :
-      - Une zone de texte pour le titre (position fixe)
-      - Une zone de texte pour le sous-titre (position fixe)
-      - Une zone de texte pour le contenu (position fixe)
-    Tout le contenu d'une slide est regroupé sur une seule diapositive.
+      - Une zone de texte pour le titre,
+      - Une zone de texte pour le sous-titre,
+      - Une zone de texte pour le contenu.
+    Le contenu des listes est traité pour différencier puces et numérotation.
     """
     slides_data = parse_docx_to_slides(doc_path)
     prs = Presentation(template_path)
@@ -148,7 +175,7 @@ def create_ppt_from_docx(doc_path, template_path, output_path):
         layout = prs.slide_layouts[0] if idx == 0 else prs.slide_layouts[1]
         slide = prs.slides.add_slide(layout)
         
-        # Effacer les placeholders par défaut
+        # Effacer les placeholders existants
         clear_placeholders(slide)
         
         # Zone de texte pour le titre
@@ -167,10 +194,14 @@ def create_ppt_from_docx(doc_path, template_path, output_path):
         content_box = slide.shapes.add_textbox(Inches(0.5), Inches(2.5), Inches(9), Inches(4))
         content_frame = content_box.text_frame
         content_frame.clear()
-        # Dictionnaire pour suivre la numérotation par niveau dans la slide
+        # Un dictionnaire pour gérer la numérotation par niveau
         numbered_counters = {}
         for paragraph in slide_data["blocks"]:
             add_paragraph_with_runs(content_frame, paragraph, numbered_counters)
+    
+    # Pour les tableaux, on peut parcourir le document Word et ajouter les tableaux si besoin.
+    # Si votre fichier Word comporte des tableaux insérés en dehors des paragraphes,
+    # il faudra étendre cette logique.
     
     prs.save(output_path)
     print("Conversion terminée :", output_path)
