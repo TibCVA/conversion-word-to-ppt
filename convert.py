@@ -8,22 +8,18 @@ Usage : python convert.py input.docx output.pptx
 
 Structure attendue du fichier Word (input.docx) :
   • Chaque slide commence par une ligne "SLIDE X" (ex. "SLIDE 1")
-  • Une ligne "Titre :" définit le titre de la slide
+  • Une ligne "Titre :" définit le titre
   • Une ligne "Sous-titre / Message clé :" définit le sous-titre
   • Le reste du texte constitue le contenu de la slide (paragraphes, listes, etc.)
 
 Le template contient :
-  • Pour SLIDE 0 (couverture) : les placeholders "PROJECT TITLE", "CVA Presentation title", "Subtitle" (et "Date")
+  • Pour SLIDE 0 (couverture) : les placeholders "PROJECT TITLE", "CVA Presentation title", "Subtitle"
   • Pour SLIDES 1 à N (standard) : les placeholders dont le texte par défaut est
        "Click to edit Master title style" (titre),
        "[Optional subtitle]" (sous-titre) et
-       "Modifiez les styles du texte du masque
-        Deuxième niveau
-        Troisième niveau
-        Quatrième niveau
-        Cinquième niveau" (body)
+       "Modifiez les styles du texte du masque…" (body)
 
-Ce script insère le contenu dans ces zones afin de respecter le design du template.
+Ce script insère le contenu dans ces zones.
 """
 
 import sys
@@ -31,7 +27,7 @@ import os
 from docx import Document
 from pptx import Presentation
 from pptx.util import Inches, Pt
-from pptx.enum.shapes import MSO_PLACEHOLDER
+from pptx.enum.shapes import MSO_PLACEHOLDER_TYPE  # Utilisez MSO_PLACEHOLDER_TYPE au lieu de MSO_PLACEHOLDER
 
 def get_list_type(paragraph):
     """
@@ -63,9 +59,9 @@ def parse_docx_to_slides(doc_path):
     """
     Parcourt le document Word et découpe son contenu en slides.
     Retourne une liste de dictionnaires, chacun contenant :
-      - "title" : le texte après "Titre :"
-      - "subtitle" : le texte après "Sous-titre / Message clé :"
-      - "blocks" : liste d'objets Paragraph (le contenu de la slide)
+      - "title": le texte après "Titre :"
+      - "subtitle": le texte après "Sous-titre / Message clé :"
+      - "blocks": liste d'objets Paragraph (le contenu de la slide)
     """
     doc = Document(doc_path)
     slides = []
@@ -99,7 +95,7 @@ def add_paragraph_with_runs(text_frame, paragraph, counters):
     Si le paragraphe est en liste, préfixe avec :
       - "• " pour une liste à puces,
       - ou avec un numéro (calculé par niveau) pour une liste numérotée.
-    'counters' est un dictionnaire qui maintient le compte par niveau pour la numérotation.
+    La variable 'counters' est un dictionnaire qui maintient le compte par niveau.
     """
     p = text_frame.add_paragraph()
     list_type = get_list_type(paragraph)
@@ -129,18 +125,22 @@ def add_paragraph_with_runs(text_frame, paragraph, counters):
             p.alignment = paragraph.alignment
         return p
 
+def clear_all_placeholders(slide):
+    """
+    Efface le texte de tous les placeholders de la diapositive pour éviter d'afficher le texte par défaut.
+    """
+    for shape in slide.placeholders:
+        try:
+            shape.text = ""
+        except Exception:
+            pass
+
 def fill_placeholders(slide, slide_data, slide_index):
     """
-    Parcourt les placeholders de la diapositive et remplit ceux qui correspondent
-    aux zones prévues dans le template.
-    Pour SLIDE 0, on attend :
-       • "PROJECT TITLE", "CVA Presentation title", "Subtitle"
-       (On laisse "Date" inchangé.)
-    Pour SLIDES 1+ on attend :
-       • Un placeholder avec le texte "Click to edit Master title style" (titre),
-       • Un placeholder avec "[Optional subtitle]" (sous-titre),
-       • Un placeholder dont le texte débute par "Modifiez les styles du texte du masque"
-         (body) dans lequel le contenu sera inséré.
+    Remplit les placeholders de la diapositive avec le contenu extrait du Word.
+    Pour SLIDE 0, on s'attend à remplir "PROJECT TITLE", "CVA Presentation title" et "Subtitle".
+    Pour les SLIDES 1+, on remplace "Click to edit Master title style" (titre),
+    "[Optional subtitle]" (sous-titre) et le placeholder BODY (commençant par "Modifiez les styles du texte du masque").
     """
     if slide_index == 0:
         for shape in slide.placeholders:
@@ -150,11 +150,10 @@ def fill_placeholders(slide, slide_data, slide_index):
             if txt == "PROJECT TITLE":
                 shape.text = slide_data["title"]
             elif txt == "CVA Presentation title":
-                # Ici, vous pouvez décider de remplir avec le même titre ou le laisser vide.
                 shape.text = slide_data["title"]
             elif txt == "Subtitle":
                 shape.text = slide_data["subtitle"]
-            # Le placeholder "Date" est laissé tel quel.
+            # Laisser "Date" inchangé.
     else:
         for shape in slide.placeholders:
             if not shape.has_text_frame:
@@ -170,12 +169,12 @@ def fill_placeholders(slide, slide_data, slide_index):
                 counters = {}
                 for para in slide_data["blocks"]:
                     add_paragraph_with_runs(tf, para, counters)
-            # Les zones pour notes, sources et numéros de page sont laissées intactes.
+            # Les placeholders pour notes, sources et numéros de page ne sont pas modifiés.
 
 def create_ppt_from_docx(doc_path, template_path, output_path):
     """
-    Crée la présentation PowerPoint en remplissant les placeholders existants
-    du template avec le contenu extrait du document Word.
+    Crée une présentation PowerPoint à partir du document Word et du template.
+    Intègre le contenu du Word dans les placeholders du template.
     """
     slides_data = parse_docx_to_slides(doc_path)
     prs = Presentation(template_path)
@@ -183,12 +182,7 @@ def create_ppt_from_docx(doc_path, template_path, output_path):
     for idx, slide_data in enumerate(slides_data):
         layout = prs.slide_layouts[0] if idx == 0 else prs.slide_layouts[1]
         slide = prs.slides.add_slide(layout)
-        # Efface le texte par défaut des placeholders
-        for shape in slide.placeholders:
-            try:
-                shape.text = ""
-            except Exception:
-                pass
+        clear_all_placeholders(slide)
         fill_placeholders(slide, slide_data, idx)
     
     prs.save(output_path)
