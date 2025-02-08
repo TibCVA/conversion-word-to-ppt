@@ -1,131 +1,130 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+import sys
+import os
 from docx import Document
-from docx.oxml.ns import qn
 from pptx import Presentation
-from pptx.util import Inches
+from pptx.util import Inches, Pt
 
-# Chemins des fichiers
-docx_path = "input.docx"
-pptx_template_path = "template.pptx"
-pptx_output_path = "output.pptx"
+# --- Débogage : afficher le répertoire courant et la liste des fichiers ---
+current_dir = os.path.dirname(os.path.abspath(__file__))
+print("Répertoire courant :", current_dir)
+print("Fichiers dans ce répertoire :", os.listdir(current_dir))
 
-# Ouvrir le document Word et la présentation PPT template
-doc = Document(docx_path)
-prs = Presentation(pptx_template_path)
+template_filename = "template_CVA.pptx"
+template_path = os.path.join(current_dir, template_filename)
+print("Chemin du template :", template_path)
 
-# Choisir un layout de diapositive approprié (par ex, index 1 pour "Titre et Contenu")
-content_layout = prs.slide_layouts[1]
+# Vérifier que le fichier existe
+if not os.path.exists(template_path):
+    print(f"Erreur : Le fichier template n'a pas été trouvé à {template_path}.")
+    sys.exit(1)
 
-slide = None  # la diapositive en cours
-content_ph = None  # placeholder de contenu en cours
+# Le reste de votre code (exemple simplifié pour la conversion)
+def parse_docx_to_slides(doc_path):
+    doc = Document(doc_path)
+    slides = []
+    current_slide = None
+    for para in doc.paragraphs:
+        txt = para.text.strip()
+        if not txt:
+            continue
+        if txt.upper().startswith("SLIDE"):
+            if current_slide is not None:
+                slides.append(current_slide)
+            current_slide = {"title": "", "subtitle": "", "blocks": []}
+            continue
+        if txt.startswith("Titre :"):
+            if current_slide is not None:
+                current_slide["title"] = txt[len("Titre :"):].strip()
+            continue
+        if txt.startswith("Sous-titre / Message clé :"):
+            if current_slide is not None:
+                current_slide["subtitle"] = txt[len("Sous-titre / Message clé :"):].strip()
+            continue
+        if current_slide is not None:
+            current_slide["blocks"].append(para)
+    if current_slide is not None:
+        slides.append(current_slide)
+    return slides
 
-for para in doc.paragraphs:
-    style_name = para.style.name or ""
-    text = para.text.strip()
-    # Si paragraphe de titre (ex: Heading 1) -> nouvelle diapositive
-    if style_name.startswith("Heading") or style_name.startswith("Titre"):  
-        # Créer une nouvelle slide avec titre
-        slide = prs.slides.add_slide(content_layout)
-        # Insérer le titre
-        title_ph = slide.shapes.title
-        title_ph.text = text
-        # Récupérer le placeholder de contenu et le vider
-        content_ph = slide.placeholders[1]  # placeholder de contenu (idx 1 généralement)
-        text_frame = content_ph.text_frame
-        text_frame.clear()
-    elif style_name.startswith("List") or style_name.startswith("Puces") or style_name.startswith("Num"):
-        # Cas d'une liste à puces/num - s'assure qu'une slide existe
-        if slide is None:
-            slide = prs.slides.add_slide(content_layout)
-            content_ph = slide.placeholders[1]
-            text_frame = content_ph.text_frame
-            text_frame.clear()
-        # Ajouter un paragraphe pour cet item de liste
-        p = text_frame.add_paragraph()
-        p.text = text
-        # Déterminer puce ou numérotation via le nom de style
-        if "Bullet" in style_name or "Puces" in style_name:
-            p.level = 1  # niveau 1 avec puce (défini dans le masque PPT)
-        elif "Number" in style_name or "Num" in style_name:
-            p.level = 2  # niveau 2 avec numérotation
-        else:
-            # Style "List Paragraph" ou autre indéfini -> par défaut puce niveau 1
-            p.level = 1
-    elif text == "":
-        # Paragraphe vide (saut de ligne) -> on peut ajouter une ligne vide dans PPT
-        if slide and content_ph:
-            text_frame.add_paragraph()  # ajoute un paragraphe vide (espacement)
-        continue
+def add_paragraph_with_runs(text_frame, paragraph, counters):
+    p = text_frame.add_paragraph()
+    # Détection simple de liste à puces/numérotation par le style (à ajuster selon votre document)
+    style_name = paragraph.style.name if paragraph.style else ""
+    if "Bullet" in style_name or "Puces" in style_name:
+        p.text = "• " + paragraph.text
+        p.level = 1
+        return p
+    elif "Number" in style_name or "Num" in style_name:
+        count = counters.get(1, 0) + 1
+        counters[1] = count
+        p.text = f"{count}. " + paragraph.text
+        p.level = 1
+        return p
     else:
-        # Paragraphe normal (non liste)
-        if slide is None:
-            slide = prs.slides.add_slide(content_layout)
-            content_ph = slide.placeholders[1]
-            text_frame = content_ph.text_frame
-            text_frame.clear()
-        p = text_frame.add_paragraph()
-        p.text = text
-        p.level = 0  # texte normal (niveau 0 = pas de puce, selon le masque)
+        for run in paragraph.runs:
+            r = p.add_run()
+            r.text = run.text
+            if run.bold is not None:
+                r.font.bold = run.bold
+            if run.italic is not None:
+                r.font.italic = run.italic
+            if run.underline is not None:
+                r.font.underline = run.underline
+            r.font.size = run.font.size if run.font.size else Pt(14)
+        return p
 
-# Parcourir les tableaux du document Word
-for table in doc.tables:
-    # Créer une nouvelle diapositive pour le tableau (ou adapter si besoin sur la même slide)
-    slide = prs.slides.add_slide(content_layout)
-    title_ph = slide.shapes.title
-    title_ph.text = "Tableau"  # on peut éventuellement utiliser un texte du doc comme titre
-    content_ph = slide.placeholders[1]
-    # Insérer le tableau aux coordonnées du placeholder de contenu
-    left, top, width, height = content_ph.left, content_ph.top, content_ph.width, content_ph.height
-    rows, cols = len(table.rows), len(table.columns)
-    table_shape = slide.shapes.add_table(rows, cols, left, top, width, height)
-    ppt_table = table_shape.table
+def clear_all_placeholders(slide):
+    for shape in slide.placeholders:
+        try:
+            shape.text = ""
+        except Exception:
+            pass
 
-    # Fixer les largeurs de colonne d'après Word (si disponibles)
-    for j, column in enumerate(table.columns):
-        if column.width:
-            ppt_table.columns[j].width = column.width
-    # Recopie du contenu des cellules et gestion des fusions
-    for i, row in enumerate(table.rows):
-        for j, cell in enumerate(row.cells):
-            ppt_cell = ppt_table.cell(i, j)
-            ppt_cell.text = cell.text.strip()
-            # Détecter fusion horizontale (gridSpan) et verticale (vMerge) sur la cellule Word
-            tc = cell._tc  # élément XML de la cellule
-            grid_span_elems = tc.xpath('.//w:gridSpan')
-            v_merge_elems = tc.xpath('.//w:vMerge')
-            # Valeurs par défaut
-            h_span = 1
-            v_span = 1
-            if grid_span_elems:
-                # nombre de colonnes fusionnées
-                span_val = int(grid_span_elems[0].get(qn('w:val')))
-                if span_val > 1:
-                    h_span = span_val
-            if v_merge_elems:
-                v_merge_val = v_merge_elems[0].get(qn('w:val'))
-                if v_merge_val == "restart":
-                    # calculer combien de lignes sont fusionnées verticalement depuis cette cellule
-                    for k in range(i+1, rows):
-                        nxt_tc = table.cell(k, j)._tc
-                        nxt_vmerge = nxt_tc.xpath('.//w:vMerge')
-                        if not nxt_vmerge:
-                            break
-                        nxt_vmerge_val = nxt_vmerge[0].get(qn('w:val'))
-                        if nxt_vmerge_val is None or nxt_vmerge_val == "continue":
-                            v_span += 1
-                        else:
-                            break
-                else:
-                    # si vMerge = continue, on n’agit pas ici (fusion gérée par la cellule 'restart')
-                    continue
-            # Si une fusion est détectée, fusionner les cellules correspondantes dans le tableau PPT
-            if v_span > 1 or h_span > 1:
-                end_row = i + v_span - 1
-                end_col = j + h_span - 1
-                try:
-                    ppt_table.cell(i, j).merge(ppt_table.cell(end_row, end_col))
-                except IndexError:
-                    # sécurité en cas d'indice hors limite (cas improbable si calculs corrects)
-                    pass
+def fill_placeholders(slide, slide_data, slide_index):
+    if slide_index == 0:
+        for shape in slide.placeholders:
+            if not shape.has_text_frame:
+                continue
+            txt = shape.text.strip()
+            if txt == "PROJECT TITLE":
+                shape.text = slide_data["title"]
+            elif txt == "CVA Presentation title":
+                shape.text = slide_data["title"]
+            elif txt == "Subtitle":
+                shape.text = slide_data["subtitle"]
+    else:
+        for shape in slide.placeholders:
+            if not shape.has_text_frame:
+                continue
+            txt = shape.text.strip()
+            if txt.startswith("Click to edit Master title style"):
+                shape.text = slide_data["title"]
+            elif txt.startswith("[Optional subtitle]"):
+                shape.text = slide_data["subtitle"]
+            elif txt.startswith("Modifiez les styles du texte du masque"):
+                tf = shape.text_frame
+                tf.clear()
+                counters = {}
+                for para in slide_data["blocks"]:
+                    add_paragraph_with_runs(tf, para, counters)
 
-# Enregistrer la présentation générée
-prs.save(pptx_output_path)
+def create_ppt_from_docx(doc_path, template_path, output_path):
+    slides_data = parse_docx_to_slides(doc_path)
+    prs = Presentation(template_path)
+    for idx, slide_data in enumerate(slides_data):
+        layout = prs.slide_layouts[0] if idx == 0 else prs.slide_layouts[1]
+        slide = prs.slides.add_slide(layout)
+        clear_all_placeholders(slide)
+        fill_placeholders(slide, slide_data, idx)
+    prs.save(output_path)
+    print("Conversion terminée :", output_path)
+
+if __name__ == "__main__":
+    if len(sys.argv) != 3:
+        print("Usage: python convert.py input.docx output.pptx")
+        sys.exit(1)
+    input_docx = sys.argv[1]
+    output_pptx = sys.argv[2]
+    create_ppt_from_docx(input_docx, template_path, output_pptx)
