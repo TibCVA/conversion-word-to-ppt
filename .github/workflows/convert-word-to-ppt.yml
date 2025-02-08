@@ -3,7 +3,7 @@ name: Convert Word to PPT
 on:
   push:
     paths:
-      - input.docx
+      - 'input.docx'
   workflow_dispatch:
 
 jobs:
@@ -19,7 +19,7 @@ jobs:
         with:
           python-version: '3.x'
 
-      - name: Install dependencies
+      - name: Install Python libraries
         run: |
           pip install --upgrade pip
           pip install python-docx python-pptx==0.6.21
