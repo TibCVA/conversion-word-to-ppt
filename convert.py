@@ -4,25 +4,29 @@
 Conversion d'un document Word (.docx) en présentation PowerPoint (.pptx)
 en utilisant un template existant (template_CVA.pptx).
 
-Structure du Word attendue :
+Structure attendue du Word :
   • Chaque slide commence par "SLIDE X"
   • "Titre :" indique le titre
-  • "Sous-titre / Message clé :" indique le sous-titre
+  • "Sous-titre / Message clé :" indique le sous‑titre
   • Le reste (paragraphes, listes, …) constitue le contenu
 
-Ce script utilise les indices des placeholders (fixés d'après le debug) pour insérer :
-  - Pour la slide 0 (couverture) :
-       • slide.placeholders[11] → titre
-       • slide.placeholders[13] → sous‑titre
-  - Pour les slides standards (slides 1+) :
-       • slide.placeholders[3] → titre
-       • slide.placeholders[2] → sous‑titre
-       • slide.placeholders[7] → contenu (BODY), auquel on insère le texte du Word
+Mapping des placeholders (indices fixes d'après votre debug) :
+
+LAYOUT #0: Diapositive de titre
+  - Placeholder index 11 (type PLACEHOLDER) doit recevoir le texte du champ "Titre :"
+  - Placeholder index 13 (type PLACEHOLDER) doit recevoir le texte du champ "Sous-titre / Message clé :"
+  - Les autres placeholders ne sont pas modifiés.
+
+LAYOUT #1: Slide_standard layout
+  - Placeholder index 3 (type PLACEHOLDER) doit recevoir le texte du champ "Titre :"
+  - Placeholder index 2 (type PLACEHOLDER) doit recevoir le texte du champ "Sous-titre / Message clé :"
+  - Placeholder index 7 (type PLACEHOLDER) doit être vidé puis rempli avec le contenu textuel du Word,
+    en conservant le formatage (bullet points, indentations, etc.).
 
 Usage :
   python convert.py input.docx output.pptx
 
-Le fichier template_CVA.pptx doit se trouver dans le même dossier que ce script.
+Le fichier template_CVA.pptx doit être dans le même dossier que ce script.
 """
 
 import sys
@@ -31,9 +35,9 @@ from docx import Document
 from pptx import Presentation
 from pptx.util import Pt
 
-# --------------------------------------------------------------------
-# Extraction du contenu du Word en une liste de slides
-# --------------------------------------------------------------------
+# -----------------------------
+# Extraction du contenu Word
+# -----------------------------
 def parse_docx_to_slides(doc_path):
     doc = Document(doc_path)
     slides_data = []
@@ -62,9 +66,9 @@ def parse_docx_to_slides(doc_path):
         slides_data.append(current_slide)
     return slides_data
 
-# --------------------------------------------------------------------
-# Gestion des listes et insertion de runs pour conserver le formatage
-# --------------------------------------------------------------------
+# -----------------------------
+# Gestion du formatage (listes, runs)
+# -----------------------------
 def get_list_type(paragraph):
     xml = paragraph._p.xml
     if 'w:numFmt val="bullet"' in xml:
@@ -110,43 +114,62 @@ def add_paragraph_with_runs(text_frame, paragraph, counters):
                 r.font.size = Pt(14)
     return new_p
 
-# --------------------------------------------------------------------
-# Remplissage des placeholders par index
-# --------------------------------------------------------------------
+# -----------------------------
+# Remplissage des placeholders par index avec debug
+# -----------------------------
 def fill_placeholders_by_index(slide, slide_data, slide_index):
     placeholders = list(slide.placeholders)
+    print("Nombre de placeholders dans la slide:", len(placeholders))
+    for i, ph in enumerate(placeholders):
+        try:
+            idx = ph.placeholder_format.idx
+        except Exception:
+            idx = "n/a"
+        print("Placeholder index:", idx, "Texte:", repr(ph.text))
+        
     if slide_index == 0:
-        # Slide de couverture
+        print("Remplissage de la slide de couverture (slide 0)")
         try:
-            # On force l'insertion dans les placeholders d'index 11 et 13
-            placeholders[11].text = slide_data["title"]
-            placeholders[13].text = slide_data["subtitle"]
-        except IndexError:
-            print("Erreur : nombre insuffisant de placeholders pour la slide de couverture.")
+            slide.placeholders[11].text = slide_data["title"]
+            print(" - Placeholder index 11 mis à jour avec:", slide_data["title"])
+        except Exception as e:
+            print("Erreur pour placeholder index 11:", e)
+        try:
+            slide.placeholders[13].text = slide_data["subtitle"]
+            print(" - Placeholder index 13 mis à jour avec:", slide_data["subtitle"])
+        except Exception as e:
+            print("Erreur pour placeholder index 13:", e)
     else:
+        print("Remplissage d'une slide standard (slide >=1)")
         try:
-            placeholders[3].text = slide_data["title"]
-            placeholders[2].text = slide_data["subtitle"]
-            # Pour le contenu, on utilise le placeholder index 7 (BODY)
-            body_ph = placeholders[7]
-            body_tf = body_ph.text_frame
-            body_tf.clear()
+            slide.placeholders[3].text = slide_data["title"]
+            print(" - Placeholder index 3 mis à jour avec:", slide_data["title"])
+        except Exception as e:
+            print("Erreur pour placeholder index 3:", e)
+        try:
+            slide.placeholders[2].text = slide_data["subtitle"]
+            print(" - Placeholder index 2 mis à jour avec:", slide_data["subtitle"])
+        except Exception as e:
+            print("Erreur pour placeholder index 2:", e)
+        try:
+            ph_body = slide.placeholders[7]
+            ph_body.text_frame.clear()
             counters = {}
             for (block_type, block_para) in slide_data["blocks"]:
                 if block_type == "paragraph":
-                    add_paragraph_with_runs(body_tf, block_para, counters)
-        except IndexError:
-            print("Erreur : nombre insuffisant de placeholders pour une slide standard.")
+                    add_paragraph_with_runs(ph_body.text_frame, block_para, counters)
+            print(" - Placeholder index 7 rempli avec le contenu.")
+        except Exception as e:
+            print("Erreur pour placeholder index 7:", e)
 
-# --------------------------------------------------------------------
+# -----------------------------
 # Fonction principale de conversion
-# --------------------------------------------------------------------
+# -----------------------------
 def create_ppt_from_docx(input_docx, template_pptx, output_pptx):
     slides_data = parse_docx_to_slides(input_docx)
     prs = Presentation(template_pptx)
-    
-    # Pour la slide de couverture, on utilise le layout "Diapositive de titre"
-    # Pour les autres, on utilise le layout "Slide_standard layout"
+
+    # Sélectionner les layouts par nom (ou utiliser des fallback)
     cover_layout = None
     standard_layout = None
     for layout in prs.slide_layouts:
@@ -165,18 +188,18 @@ def create_ppt_from_docx(input_docx, template_pptx, output_pptx):
         fill_placeholders_by_index(slide0, slides_data[0], 0)
     else:
         print("Aucune diapositive trouvée dans le document Word.")
-    
-    # Créer les slides standards (slides 1+)
+
+    # Créer les slides standards (slides 1 à N)
     for idx, slide_data in enumerate(slides_data[1:], start=1):
         slide = prs.slides.add_slide(standard_layout)
         fill_placeholders_by_index(slide, slide_data, idx)
-    
+
     prs.save(output_pptx)
     print("Conversion terminée :", output_pptx)
 
-# --------------------------------------------------------------------
+# -----------------------------
 # Point d'entrée
-# --------------------------------------------------------------------
+# -----------------------------
 if __name__ == "__main__":
     if len(sys.argv) != 3:
         print("Usage : python convert.py input.docx output.pptx")
