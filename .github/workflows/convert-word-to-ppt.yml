@@ -7,28 +7,29 @@ on:
   workflow_dispatch:
 
 jobs:
-  convert:
+  convert_ppt:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Récupérer le dépôt
         uses: actions/checkout@v2
 
-      - name: Set up Python
+      - name: Installer Python
         uses: actions/setup-python@v2
         with:
           python-version: '3.x'
 
-      - name: Install dependencies
+      - name: Installer les dépendances
         run: |
+          pip install --upgrade pip
           pip install python-docx python-pptx==0.6.21
 
-      - name: Run conversion script
+      - name: Lancer le script de conversion
         run: |
           python convert.py input.docx output.pptx
 
-      - name: Upload PPT as artifact
-        uses: actions/upload-artifact@v4
+      - name: Publier le PPT en artifact
+        uses: actions/upload-artifact@v3
         with:
-          name: presentation
+          name: PresentationResult
           path: output.pptx
