@@ -4,25 +4,25 @@
 Conversion d'un document Word (.docx) en présentation PowerPoint (.pptx)
 en utilisant un template existant (template_CVA.pptx).
 
-Structure attendue du Word :
+Structure du Word attendue :
   • Chaque slide commence par "SLIDE X"
-  • Une ligne "Titre :" indique le titre
-  • Une ligne "Sous-titre / Message clé :" indique le sous‑titre
-  • Le reste (paragraphes, listes, etc.) constitue le contenu
+  • "Titre :" indique le titre
+  • "Sous-titre / Message clé :" indique le sous-titre
+  • Le reste (paragraphes, listes, …) constitue le contenu
 
-Le template PPT doit comporter deux layouts :
-  • "Diapositive de titre" (slide 0) avec des placeholders dont le texte par défaut contient :
-       "PROJECT TITLE" → (à remplacer par le titre)
-       "CVA Presentation title" → (à remplacer par le sous‑titre)
-       "Subtitle" → (à vider)
-  • "Slide_standard layout" (slides 1+) avec des placeholders dont le texte par défaut contient :
-       "Click to edit Master title style" → (à remplacer par le titre)
-       "[Optional subtitle]" → (à remplacer par le sous‑titre)
-       "Modifiez les styles du texte du masque" → (à vider puis à remplir avec le contenu)
-       
+Ce script utilise les indices des placeholders (fixés d'après le debug) pour insérer :
+  - Pour la slide 0 (couverture) :
+       • slide.placeholders[11] → titre
+       • slide.placeholders[13] → sous‑titre
+  - Pour les slides standards (slides 1+) :
+       • slide.placeholders[3] → titre
+       • slide.placeholders[2] → sous‑titre
+       • slide.placeholders[7] → contenu (BODY), auquel on insère le texte du Word
+
 Usage :
   python convert.py input.docx output.pptx
-Le fichier template_CVA.pptx doit être dans le même dossier que ce script.
+
+Le fichier template_CVA.pptx doit se trouver dans le même dossier que ce script.
 """
 
 import sys
@@ -32,7 +32,7 @@ from pptx import Presentation
 from pptx.util import Pt
 
 # --------------------------------------------------------------------
-# Extraction du contenu du Word
+# Extraction du contenu du Word en une liste de slides
 # --------------------------------------------------------------------
 def parse_docx_to_slides(doc_path):
     doc = Document(doc_path)
@@ -63,7 +63,7 @@ def parse_docx_to_slides(doc_path):
     return slides_data
 
 # --------------------------------------------------------------------
-# Gestion des listes et insertion de runs
+# Gestion des listes et insertion de runs pour conserver le formatage
 # --------------------------------------------------------------------
 def get_list_type(paragraph):
     xml = paragraph._p.xml
@@ -111,41 +111,32 @@ def add_paragraph_with_runs(text_frame, paragraph, counters):
     return new_p
 
 # --------------------------------------------------------------------
-# Remplissage des placeholders dans une slide
+# Remplissage des placeholders par index
 # --------------------------------------------------------------------
-def fill_placeholders_in_slide(slide, slide_data, slide_index):
-    # On travaille sur les placeholders de la slide
+def fill_placeholders_by_index(slide, slide_data, slide_index):
     placeholders = list(slide.placeholders)
-    if not placeholders:
-        print("Aucun placeholder trouvé dans la slide !")
-        return
-
     if slide_index == 0:
-        # Pour la slide de couverture
-        for ph in placeholders:
-            txt = (ph.text or "").strip().lower()
-            if "project title" in txt:
-                ph.text = slide_data["title"]
-            elif "cva presentation title" in txt:
-                ph.text = slide_data["subtitle"]
-            elif "subtitle" in txt:
-                ph.text = ""
+        # Slide de couverture
+        try:
+            # On force l'insertion dans les placeholders d'index 11 et 13
+            placeholders[11].text = slide_data["title"]
+            placeholders[13].text = slide_data["subtitle"]
+        except IndexError:
+            print("Erreur : nombre insuffisant de placeholders pour la slide de couverture.")
     else:
-        # Pour les slides standards
-        for ph in placeholders:
-            txt = (ph.text or "").strip().lower()
-            if "click to edit master title style" in txt:
-                ph.text = slide_data["title"]
-            elif "[optional subtitle]" in txt:
-                ph.text = slide_data["subtitle"]
-            elif "modifiez les styles du texte du masque" in txt:
-                # Vider et insérer le contenu
-                tf = ph.text_frame
-                tf.clear()
-                counters = {}
-                for (block_type, block_para) in slide_data["blocks"]:
-                    if block_type == "paragraph":
-                        add_paragraph_with_runs(tf, block_para, counters)
+        try:
+            placeholders[3].text = slide_data["title"]
+            placeholders[2].text = slide_data["subtitle"]
+            # Pour le contenu, on utilise le placeholder index 7 (BODY)
+            body_ph = placeholders[7]
+            body_tf = body_ph.text_frame
+            body_tf.clear()
+            counters = {}
+            for (block_type, block_para) in slide_data["blocks"]:
+                if block_type == "paragraph":
+                    add_paragraph_with_runs(body_tf, block_para, counters)
+        except IndexError:
+            print("Erreur : nombre insuffisant de placeholders pour une slide standard.")
 
 # --------------------------------------------------------------------
 # Fonction principale de conversion
@@ -153,8 +144,9 @@ def fill_placeholders_in_slide(slide, slide_data, slide_index):
 def create_ppt_from_docx(input_docx, template_pptx, output_pptx):
     slides_data = parse_docx_to_slides(input_docx)
     prs = Presentation(template_pptx)
-
-    # Recherche des layouts par leur nom
+    
+    # Pour la slide de couverture, on utilise le layout "Diapositive de titre"
+    # Pour les autres, on utilise le layout "Slide_standard layout"
     cover_layout = None
     standard_layout = None
     for layout in prs.slide_layouts:
@@ -169,17 +161,16 @@ def create_ppt_from_docx(input_docx, template_pptx, output_pptx):
 
     # Créer la slide de couverture (slide 0)
     if slides_data:
-        slide0_data = slides_data[0]
         slide0 = prs.slides.add_slide(cover_layout)
-        fill_placeholders_in_slide(slide0, slide0_data, 0)
+        fill_placeholders_by_index(slide0, slides_data[0], 0)
     else:
         print("Aucune diapositive trouvée dans le document Word.")
-
-    # Créer les slides standards
+    
+    # Créer les slides standards (slides 1+)
     for idx, slide_data in enumerate(slides_data[1:], start=1):
         slide = prs.slides.add_slide(standard_layout)
-        fill_placeholders_in_slide(slide, slide_data, idx)
-
+        fill_placeholders_by_index(slide, slide_data, idx)
+    
     prs.save(output_pptx)
     print("Conversion terminée :", output_pptx)
 
