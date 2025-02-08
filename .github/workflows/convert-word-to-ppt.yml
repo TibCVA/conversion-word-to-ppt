@@ -21,7 +21,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install python-docx python-pptx
+          pip install python-docx python-pptx==0.6.21
 
       - name: Run conversion script
         run: |
