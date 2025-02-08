@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - input.docx
+  workflow_dispatch:
 
 jobs:
   convert:
