@@ -1,28 +1,25 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Conversion d'un document Word en présentation PowerPoint en insérant
-le contenu dans les placeholders existants du template.
+Conversion d'un document Word en présentation PowerPoint
+en insérant le contenu dans les zones réservées du masque du template.
 
 Usage : python convert.py input.docx output.pptx
 
-Structure attendue du Word (input.docx) :
-  • Chaque slide commence par une ligne "SLIDE X" (ex. "SLIDE 1")
-  • Une ligne "Titre :" définit le titre de la slide
-  • Une ligne "Sous-titre / Message clé :" définit le sous-titre
+Structure du Word (input.docx) :
+  • Chaque slide débute par une ligne "SLIDE X" (ex. "SLIDE 1")
+  • Une ligne "Titre :" indique le titre
+  • Une ligne "Sous-titre / Message clé :" indique le sous-titre
   • Le reste (paragraphes et tableaux) constitue le contenu
 
 Template PPT :
-  • Pour SLIDE 0 (couverture) : placeholders dont le texte par défaut contient 
-      "PROJECT TITLE", "CVA Presentation title" et "Subtitle" (le placeholder "Date" reste inchangé)
-  • Pour SLIDES 1+ (standard) : placeholders dont le texte par défaut contient 
-      "Click to edit Master title style" (titre), "[Optional subtitle]" (sous-titre) et 
-      "Modifiez les styles du texte du masque" (body)
-
-Le script insère le contenu dans ces zones en préservant autant que possible :
-  - Les listes à puces ou numérotées (en utilisant le style et le niveau d'indentation)
-  - Le formatage des runs (gras, italique, souligné, taille)
-  - Les tableaux du Word en tant que tableaux modifiables
+  • SLIDE 0 (couverture) doit avoir des espaces (dans le masque) portant les titres :
+         "PROJECT TITLE", "CVA Presentation title" et "Subtitle"
+  • SLIDES 1+ doivent avoir des espaces portant par défaut :
+         "Click to edit Master title style" (titre),
+         "[Optional subtitle]" (sous-titre),
+         "Modifiez les styles du texte du masque" (zone de contenu)
+Ce script insère le contenu extrait du Word dans ces zones.
 """
 
 import sys
@@ -31,13 +28,36 @@ from docx import Document
 from pptx import Presentation
 from pptx.util import Inches, Pt
 
-# --- Fonctions de détection et de traitement des listes ---
+# Extraction du contenu du Word en slides
+def parse_docx_to_slides(doc_path):
+    doc = Document(doc_path)
+    slides = []
+    current_slide = None
+    for para in doc.paragraphs:
+        text = para.text.strip()
+        if not text:
+            continue
+        if text.upper().startswith("SLIDE"):
+            if current_slide is not None:
+                slides.append(current_slide)
+            current_slide = {"title": "", "subtitle": "", "blocks": []}
+            continue
+        if text.startswith("Titre :"):
+            if current_slide is not None:
+                current_slide["title"] = text[len("Titre :"):].strip()
+            continue
+        if text.startswith("Sous-titre / Message clé :"):
+            if current_slide is not None:
+                current_slide["subtitle"] = text[len("Sous-titre / Message clé :"):].strip()
+            continue
+        if current_slide is not None:
+            current_slide["blocks"].append(("paragraph", para))
+    if current_slide is not None:
+        slides.append(current_slide)
+    return slides
 
+# Gestion des listes : détection simple par le XML
 def get_list_type(paragraph):
-    """
-    Retourne "bullet" si le paragraphe utilise une puce (w:numFmt val="bullet"),
-    "decimal" s'il est numéroté (w:numFmt val="decimal"), ou None sinon.
-    """
     xml = paragraph._p.xml
     if 'w:numFmt val="bullet"' in xml:
         return "bullet"
@@ -47,10 +67,6 @@ def get_list_type(paragraph):
         return None
 
 def get_indentation_level(paragraph):
-    """
-    Estime le niveau d'indentation à partir de paragraph_format.left_indent.
-    Environ 0.25 inch correspond à 1 niveau.
-    """
     indent = paragraph.paragraph_format.left_indent
     if indent is None:
         return 0
@@ -59,54 +75,7 @@ def get_indentation_level(paragraph):
     except Exception:
         return 0
 
-# --- Extraction du contenu du Word en slides ---
-def parse_docx_to_slides(doc_path):
-    """
-    Parcourt le document Word et découpe son contenu en slides.
-    Retourne une liste de dictionnaires avec :
-      - "title": le texte après "Titre :"
-      - "subtitle": le texte après "Sous-titre / Message clé :"
-      - "blocks": liste d'objets (tuples ("paragraph", paragraph) ou ("table", table))
-    """
-    doc = Document(doc_path)
-    slides = []
-    current_slide = None
-    # On parcourt l'ensemble des blocs (paragraphes et tableaux) dans l'ordre du document.
-    for para in doc.paragraphs:
-        txt = para.text.strip()
-        if not txt:
-            continue
-        if txt.upper().startswith("SLIDE"):
-            if current_slide is not None:
-                slides.append(current_slide)
-            current_slide = {"title": "", "subtitle": "", "blocks": []}
-            continue
-        if txt.startswith("Titre :"):
-            if current_slide is not None:
-                current_slide["title"] = txt[len("Titre :"):].strip()
-            continue
-        if txt.startswith("Sous-titre / Message clé :"):
-            if current_slide is not None:
-                current_slide["subtitle"] = txt[len("Sous-titre / Message clé :"):].strip()
-            continue
-        if current_slide is not None:
-            current_slide["blocks"].append(("paragraph", para))
-    # Traitement des tableaux (ajouter tous les tableaux trouvés, s'ils existent)
-    for table in doc.tables:
-        # On ajoute le tableau dans la dernière slide (si nécessaire, vous pouvez adapter cette logique)
-        if current_slide is not None:
-            current_slide["blocks"].append(("table", table))
-    if current_slide is not None:
-        slides.append(current_slide)
-    return slides
-
-# --- Insertion du texte dans un text frame en préservant le formatage ---
 def add_paragraph_with_runs(text_frame, paragraph, counters):
-    """
-    Ajoute un paragraphe dans le text_frame en copiant ses runs.
-    Si le paragraphe est une liste, préfixe avec "• " pour les puces ou avec un numéro pour les listes numérotées.
-    'counters' est un dictionnaire qui garde la numérotation par niveau.
-    """
     p = text_frame.add_paragraph()
     list_type = get_list_type(paragraph)
     level = get_indentation_level(paragraph)
@@ -133,14 +102,8 @@ def add_paragraph_with_runs(text_frame, paragraph, counters):
             r.font.size = run.font.size if run.font.size else Pt(14)
         return p
 
-# --- Insertion d'un tableau Word dans PowerPoint ---
+# Insertion d'un tableau Word en tant que tableau modifiable dans PPT
 def insert_table(slide, table, left, top, width, height):
-    """
-    Insère un tableau modifiable dans la diapositive.
-    Respecte le nombre de lignes et de colonnes du tableau Word.
-    Les cellules fusionnées ne sont pas automatiquement détectées ici (cette opération est complexe),
-    mais la structure de base et le contenu textuel de chaque cellule sont copiés.
-    """
     rows = len(table.rows)
     cols = len(table.columns)
     table_shape = slide.shapes.add_table(rows, cols, left, top, width, height)
@@ -151,18 +114,9 @@ def insert_table(slide, table, left, top, width, height):
             ppt_table.cell(i, j).text = cell_text
     return table_shape
 
-# --- Remplissage des placeholders du template ---
+# Remplissage des zones réservées du template
 def fill_placeholders(slide, slide_data, slide_index):
-    """
-    Remplit les zones réservées (placeholders) de la diapositive avec le contenu extrait.
-    Pour SLIDE 0, on remplace les placeholders dont le texte par défaut contient :
-         "PROJECT TITLE", "CVA Presentation title", "Subtitle"
-    Pour les SLIDES 1+, on remplace les placeholders dont le texte par défaut contient :
-         "Click to edit Master title style" (titre),
-         "[Optional subtitle]" (sous-titre) et
-         "Modifiez les styles du texte du masque" (body).
-    Les autres placeholders (notes, sources, numéros) restent inchangés.
-    """
+    # Pour SLIDE 0 (couverture)
     if slide_index == 0:
         for shape in slide.placeholders:
             if not shape.has_text_frame:
@@ -175,6 +129,7 @@ def fill_placeholders(slide, slide_data, slide_index):
             elif "subtitle" in txt:
                 shape.text = slide_data["subtitle"]
     else:
+        # Pour les slides standard
         for shape in slide.placeholders:
             if not shape.has_text_frame:
                 continue
@@ -190,38 +145,25 @@ def fill_placeholders(slide, slide_data, slide_index):
                 for block_type, block in slide_data["blocks"]:
                     if block_type == "paragraph":
                         add_paragraph_with_runs(tf, block, counters)
-                    elif block_type == "table":
-                        # Si le contenu contient des tableaux, insérez-les après le texte dans ce placeholder.
-                        # Ici, nous ajoutons un paragraphe vide pour séparer le texte du tableau.
-                        tf.add_paragraph()
-                        # Utilisez les coordonnées du placeholder pour insérer le tableau.
-                        left = shape.left
-                        top = shape.top + shape.height + Inches(0.2)
-                        width = shape.width
-                        # Estimez la hauteur du tableau en fonction du nombre de lignes (0.8 inch par ligne par exemple)
-                        height = Inches(0.8 * len(block.rows))
-                        insert_table(slide, block, left, top, width, height)
+                    # Si le Word contenait des tableaux, vous pourriez les insérer ici ou sur une slide séparée.
 
 def clear_all_placeholders(slide):
-    """
-    Efface le texte de tous les placeholders de la diapositive pour éviter l'affichage du texte par défaut.
-    """
     for shape in slide.placeholders:
         try:
             shape.text = ""
         except Exception:
             pass
 
-# --- Fonction principale de conversion ---
 def create_ppt_from_docx(doc_path, template_path, output_path):
     slides_data = parse_docx_to_slides(doc_path)
     prs = Presentation(template_path)
+    
     for idx, slide_data in enumerate(slides_data):
-        # Utiliser layout 0 pour la slide 0 et layout 1 pour les suivantes.
         layout = prs.slide_layouts[0] if idx == 0 else prs.slide_layouts[1]
         slide = prs.slides.add_slide(layout)
         clear_all_placeholders(slide)
         fill_placeholders(slide, slide_data, idx)
+    
     prs.save(output_path)
     print("Conversion terminée :", output_path)
 
