@@ -1,0 +1,33 @@
+name: Convert Word to PPT
+
+on:
+  push:
+    paths:
+      - input.docx
+
+jobs:
+  convert:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.x'
+
+      - name: Install dependencies
+        run: |
+          pip install python-docx python-pptx
+
+      - name: Run conversion script
+        run: |
+          python convert.py input.docx output.pptx
+
+      - name: Upload PPT as artifact
+        uses: actions/upload-artifact@v2
+        with:
+          name: presentation
+          path: output.pptx
