@@ -280,6 +280,9 @@ def create_slide(prs, slide_data):
         text_frame.word_wrap = True
         text_frame.margin_left = text_frame.margin_right = Inches(0.1)
         
+        # Dictionnaire pour suivre les compteurs de numérotation par niveau
+        number_counters = {}
+        
         # Ajout de chaque paragraphe dans la même zone de texte
         first_paragraph = True
         for content in slide_data["content"]:
@@ -289,42 +292,28 @@ def create_slide(prs, slide_data):
                 paragraph = text_frame.paragraphs[0]
                 first_paragraph = False
             
-            # Application du style de liste
-            if content["list_type"]:
-                paragraph.level = content["level"]
-                prefix = ""
-                if content["list_type"] == "bullet":
-                    prefix = "• "
-                elif content["list_type"] == "number":
-                    prefix = f"{paragraph._index + 1}. "
-                
-                # Indentation en fonction du niveau
-                indent = "    " * content["level"]
-                prefix = indent + prefix
-            else:
-                prefix = ""
-            
-            # Ajout des runs avec leur formatage
-            if content["runs"]:
-                # Premier run avec préfixe si nécessaire
-                first_run = True
-                for run_format in content["runs"]:
-                    run = paragraph.add_run()
-                    if first_run and prefix:
-                        run.text = prefix + run_format["text"]
-                        first_run = False
-                    else:
-                        run.text = run_format["text"]
-                    
-                    run.font.name = "Arial"
-                    run.font.size = Pt(11)
-                    run.font.bold = run_format["bold"]
-                    run.font.italic = run_format["italic"]
-                    run.font.underline = run_format["underline"]
-            else:
-                paragraph.text = prefix + content["text"]
-                paragraph.font.name = "Arial"
-                paragraph.font.size = Pt(11)
+            format_paragraph_content(paragraph, text_frame, content, number_counters)
+    
+    # Position pour les tableaux
+    current_y = CONTENT_ZONE["y"]
+    if slide_data["content"]:
+        current_y += content_shape.height + Inches(0.2)
+    
+    # Ajout des tableaux
+    for table in slide_data["tables"]:
+        if current_y + Inches(1) > (CONTENT_ZONE["y"] + CONTENT_ZONE["height"]):
+            print(f"Warning: Espace insuffisant pour un tableau dans la slide")
+            break
+        
+        height = Inches(len(table.rows) * 0.3)
+        shape = add_table_to_slide(
+            slide, table,
+            CONTENT_ZONE["x"], current_y,
+            CONTENT_ZONE["width"], height
+        )
+        current_y += height + Inches(0.2)
+    
+    return slide
     
     # Position pour les tableaux
     current_y = CONTENT_ZONE["y"]
