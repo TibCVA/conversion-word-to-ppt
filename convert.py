@@ -7,7 +7,7 @@ from docx import Document
 from pptx import Presentation
 from pptx.util import Inches, Pt
 from pptx.enum.shapes import MSO_SHAPE_TYPE
-from pptx.enum.text import PP_ALIGN
+from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
 
 def px_to_inch(px):
     return px / 96.0
@@ -72,16 +72,20 @@ def parse_docx_to_slides(doc_path):
     return slides_data
 
 def create_textbox_with_text(slide, text, left, top, width, height, font_name="Arial", 
-                           font_size=11, bold=False, auto_fit_size=None):
+                           font_size=11, bold=False, auto_fit_size=None, margin_left=0.1):
     textbox = slide.shapes.add_textbox(left, top, width, height)
     text_frame = textbox.text_frame
     text_frame.word_wrap = True
+    text_frame.margin_left = Inches(margin_left)
+    text_frame.margin_right = Inches(0.1)
+    text_frame.vertical_anchor = MSO_ANCHOR.TOP
     
     paragraph = text_frame.paragraphs[0]
     paragraph.text = text
     paragraph.font.name = font_name
     paragraph.font.size = Pt(font_size)
     paragraph.font.bold = bold
+    paragraph.alignment = PP_ALIGN.LEFT
     
     if auto_fit_size:
         try:
