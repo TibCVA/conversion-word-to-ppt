@@ -35,29 +35,25 @@ from pptx.dml.color import RGBColor
 def px_to_inch(px):
     return float(px) / 96.0
 
-# Conversion cm en pouces
-def cm_to_inch(cm):
-    return cm / 2.54
-
-# Définition des zones de positionnement
+# Conversion cm vers pouces et addition d'un déplacement vertical pour le titre (0.4 inch)
 TITLE_ZONE = {
     "x": Inches(px_to_inch(76)),
-    "y": Inches(px_to_inch(35) + 0.4),  # Déplacé de 0.4 pouce vers le bas
-    "width": Inches(cm_to_inch(30.33)),  # 30.33 cm
+    "y": Inches(px_to_inch(35) + 0.4),  # Ajout de 0.4 inch pour descendre le titre
+    "width": Inches(30.33 / 2.54),  # Conversion de 30.33 cm en pouces
     "height": Inches(max(px_to_inch(70), 0.5))
 }
 
 SUBTITLE_ZONE = {
     "x": Inches(px_to_inch(76)),
     "y": Inches(px_to_inch(119)),
-    "width": Inches(cm_to_inch(30.33)),  # 30.33 cm
+    "width": Inches(30.33 / 2.54),  # Conversion de 30.33 cm en pouces
     "height": Inches(max(px_to_inch(56), 0.5))
 }
 
 CONTENT_ZONE = {
     "x": Inches(px_to_inch(76)),
     "y": Inches(px_to_inch(189)),
-    "width": Inches(cm_to_inch(30.33)),  # 30.33 cm
+    "width": Inches(30.33 / 2.54),  # Conversion de 30.33 cm en pouces
     "height": Inches(max(px_to_inch(425), 1))
 }
 
@@ -145,10 +141,6 @@ def add_formatted_text(paragraph, content, number_counters=None):
     level = content.get("level", 0)
     prefix = ""
     
-    # Configuration de base du paragraphe
-    paragraph.alignment = PP_ALIGN.CENTER  # Centrage du texte
-    paragraph.space_after = Pt(3)  # Espacement de 3 points après le paragraphe
-    
     # Application des listes
     if content.get("list_type"):
         paragraph.level = level
@@ -180,14 +172,17 @@ def add_formatted_text(paragraph, content, number_counters=None):
                 run.text = run_format["text"]
             
             run.font.name = "Arial"
-            run.font.size = Pt(12)  # Taille de police augmentée à 12
+            run.font.size = Pt(12)  # Taille de police par défaut augmentée à 12
             run.font.bold = run_format.get("bold", False)
             run.font.italic = run_format.get("italic", False)
             run.font.underline = run_format.get("underline", False)
     else:
         paragraph.text = prefix + content["text"]
         paragraph.font.name = "Arial"
-        paragraph.font.size = Pt(12)  # Taille de police augmentée à 12
+        paragraph.font.size = Pt(12)  # Taille de police par défaut augmentée à 12
+        
+    # Ajout de l'espacement après le paragraphe (3 points)
+    paragraph.space_after = Pt(3)
 
 def create_slide(prs, slide_data):
     """Crée une slide complète avec son contenu."""
