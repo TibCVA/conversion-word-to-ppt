@@ -160,11 +160,20 @@ def parse_word_content(doc_path):
             elif text.startswith("Sous-titre / Message clé :"):
                 current_slide["subtitle"] = text[len("Sous-titre / Message clé :"):].strip()
             else:
+                # Détection plus robuste des puces
+                has_bullet = False
+                try:
+                    if paragraph._element.pPr is not None:
+                        if paragraph._element.pPr.numPr is not None or paragraph._element.pPr.pStyle is not None:
+                            has_bullet = True
+                except:
+                    pass
+
                 # Capture des propriétés de formatage
                 para_data = {
                     "text": text,
                     "level": paragraph.style.name.split("Heading ")[-1] if "Heading" in paragraph.style.name else "0",
-                    "bullet": paragraph._element.pPr is not None and paragraph._element.pPr.numPr is not None
+                    "bullet": has_bullet
                 }
                 current_slide["content"].append(para_data)
     
@@ -242,7 +251,11 @@ def create_slide(prs, slide_data):
             if content.get("bullet"):
                 text_frame = shape.text_frame
                 p = text_frame.paragraphs[0]
-                p.bullet.enabled = True
+                try:
+                    p._pPr.get_or_add_pPr().add_buNone()  # Réinitialise les puces
+                    p._pPr.get_or_add_pPr().add_buChar(value='•')  # Ajoute une puce
+                except:
+                    print(f"Avertissement: Impossible d'ajouter une puce au paragraphe {content['text'][:30]}...")
             
             current_y += content_height + Inches(0.1)
     
