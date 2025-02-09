@@ -12,7 +12,6 @@ from pptx.util import Inches, Pt
 from pptx.enum.shapes import MSO_SHAPE_TYPE
 from pptx.enum.text import PP_ALIGN, MSO_ANCHOR, MSO_AUTO_SIZE
 from pptx.dml.color import RGBColor
-from docx.oxml import NS, OxmlElement
 
 def px_to_inch(px):
     """Conversion précise des pixels en pouces"""
