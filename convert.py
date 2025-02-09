@@ -4,6 +4,10 @@
 import sys
 import os
 from docx import Document
+from docx.text.paragraph import Paragraph
+from docx.table import Table
+from docx.oxml.xmlchemy import OxmlElement
+from docx.shared import Pt
 from pptx import Presentation
 from pptx.util import Inches, Pt
 from pptx.enum.shapes import MSO_SHAPE_TYPE
@@ -187,14 +191,15 @@ def parse_word_content(doc_path):
     elements = []
     for element in doc.element.body:
         if element.tag.endswith('p'):
-            elements.append(('paragraph', Paragraph(element, doc)))
+            elements.append(('paragraph', doc.element.body.find_all(element.tag)[0]))
         elif element.tag.endswith('tbl'):
-            elements.append(('table', Table(element, doc)))
+            elements.append(('table', doc.element.body.find_all(element.tag)[0]))
     
     # Analyse des éléments en préservant l'ordre
     for elem_type, element in elements:
         if elem_type == 'paragraph':
-            text = element.text.strip()
+            paragraph = Paragraph(element, doc)
+            text = paragraph.text.strip()
             if not text:
                 continue
             
