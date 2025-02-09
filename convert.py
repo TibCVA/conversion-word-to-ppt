@@ -6,29 +6,29 @@ en utilisant un template existant (template_CVA.pptx) comme arrière-plan.
 
 Le document Word doit être structuré ainsi :
   • Chaque slide commence par "SLIDE X"
-  • Une ligne "Titre :" donne le titre de la slide
-  • Une ligne "Sous-titre / Message clé :" donne le sous-titre
+  • Une ligne "Titre :" indique le titre
+  • Une ligne "Sous-titre / Message clé :" indique le sous-titre
   • Le reste (paragraphes, listes, tableaux) constitue le contenu
 
-Pour chaque slide, le script crée une nouvelle diapositive à partir d’un layout Blank,
-puis y ajoute trois zones de texte positionnées selon les coordonnées définies ci‑dessous
-(en pixels convertis en pouces, avec 96 px/inch) :
+Pour chaque slide, le script crée une diapositive à partir d'un layout Blank,
+puis y ajoute trois zones de texte positionnées selon ces coordonnées (en pixels convertis en pouces,
+en supposant 96 px/inch):
 
   title_zone:    { x: 76,  y: 35,  width: 1382, height: 70 }
   subtitle_zone: { x: 76,  y: 119, width: 1382, height: 56 }
   content_zone:  { x: 76,  y: 189, width: 1382, height: 425 }
 
 Les styles forcés sont :
-  - Titre : Arial, taille 22 pts en gras (auto-ajusté entre 22 et 16 pts)
-  - Sous-titre : Arial, taille 18 pts non gras (auto-ajusté entre 18 et 14 pts)
-  - Contenu : Arial, taille 11 pts (auto-ajusté entre 11 et 9 pts)
+  - Titre : Arial, taille 22 pts en gras (auto-ajusté via fit_text(max_size=22))
+  - Sous-titre : Arial, taille 18 pts non gras (auto-ajusté via fit_text(max_size=18))
+  - Contenu : Arial, taille 11 pts (auto-ajusté via fit_text(max_size=11))
     • Les paragraphes conservent puces, numérotation et retraits.
-  - Tableaux : Texte en Arial, taille 10 pts, avec la première ligne en gras.
+  - Tableaux : texte en Arial, taille 10 pts, avec la première ligne en gras.
 
 Usage :
   python convert.py input.docx output.pptx
 
-Le fichier template_CVA.pptx (contenant au moins un layout Blank) doit se trouver dans le même dossier que ce script.
+Le fichier template_CVA.pptx (contenant au moins un layout Blank) doit être dans le même dossier.
 """
 
 import sys
@@ -41,7 +41,7 @@ from pptx.util import Inches, Pt
 def px_to_inch(px):
     return px / 96.0
 
-# Coordonnées converties en pouces
+# Coordonnées (converties en pouces)
 TITLE_ZONE = {
     "x": px_to_inch(76),
     "y": px_to_inch(35),
@@ -62,18 +62,18 @@ CONTENT_ZONE = {
 }
 
 # ------------------------------------------------------------------------------
-# Supprimer toutes les diapositives de la présentation
+# Supprimer toutes les diapositives existantes (si elles existent)
 # ------------------------------------------------------------------------------
 def remove_all_slides(prs):
-    # Méthode robuste pour supprimer toutes les diapositives
     sldIdLst = prs.slides._sldIdLst
     while len(sldIdLst) > 0:
         rId = sldIdLst[0].rId
         prs.part.drop_rel(rId)
         sldIdLst.remove(sldIdLst[0])
+    print("Toutes les diapositives existantes ont été supprimées.")
 
 # ------------------------------------------------------------------------------
-# Itérer sur les éléments de niveau bloc (paragraphes et tableaux)
+# Itération sur les éléments de niveau bloc (paragraphes et tableaux) dans le Word
 # ------------------------------------------------------------------------------
 def iter_block_items(parent):
     from docx.oxml.ns import qn
@@ -124,7 +124,7 @@ def parse_docx_to_slides(doc_path):
     return slides_data
 
 # ------------------------------------------------------------------------------
-# Gestion du formatage pour les paragraphes (puces, numérotation, retraits)
+# Gestion du formatage des paragraphes (puces, numérotation, retraits)
 # ------------------------------------------------------------------------------
 def get_list_type(paragraph):
     xml = paragraph._p.xml
@@ -235,7 +235,6 @@ def add_content_blocks(slide, blocks, zone):
 # Création d'une slide pour chaque slide du Word (utilise un layout Blank)
 # ------------------------------------------------------------------------------
 def add_slide_with_text(prs, slide_data):
-    # Choisir un layout Blank
     blank_layout = None
     for layout in prs.slide_layouts:
         if "Blank" in layout.name:
@@ -282,8 +281,10 @@ def add_slide_with_text(prs, slide_data):
 def create_ppt_from_docx(input_docx, template_pptx, output_pptx):
     slides_data = parse_docx_to_slides(input_docx)
     prs = Presentation(template_pptx)
-    # Supprimer toutes les diapositives existantes dans le template pour partir d'une présentation vide
-    remove_all_slides(prs)
+    # Si des slides existent dans le template, on les supprime
+    if len(prs.slides) > 0:
+        remove_all_slides(prs)
+    print(f"Nombre de slides après suppression du template: {len(prs.slides)}")
     
     if slides_data:
         for slide_data in slides_data:
@@ -291,6 +292,7 @@ def create_ppt_from_docx(input_docx, template_pptx, output_pptx):
     else:
         print("Aucune slide trouvée dans le document Word.")
     
+    print(f"Nombre de slides dans la présentation finale: {len(prs.slides)}")
     prs.save(output_pptx)
     print("Conversion terminée :", output_pptx)
 
@@ -303,6 +305,7 @@ def remove_all_slides(prs):
         rId = sldIdLst[0].rId
         prs.part.drop_rel(rId)
         sldIdLst.remove(sldIdLst[0])
+    print("Toutes les slides existantes ont été supprimées.")
 
 # ------------------------------------------------------------------------------
 # Point d'entrée
