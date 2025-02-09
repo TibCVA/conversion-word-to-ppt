@@ -1,6 +1,26 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
+"""
+Convertisseur Word vers PowerPoint
+
+Ce script convertit un document Word (.docx) en présentation PowerPoint (.pptx)
+en utilisant un template existant comme arrière-plan. Le document Word doit être
+structuré avec des marqueurs "SLIDE X" pour délimiter chaque diapositive.
+
+Structure attendue du Word :
+    • "SLIDE X" : début d'une nouvelle diapositive
+    • "Titre : " : titre de la diapositive
+    • "Sous-titre / Message clé : " : sous-titre de la diapositive
+    • Contenu : paragraphes suivants (avec puces et numérotation préservées)
+    • Tableaux : conservés et positionnés après le texte
+
+Usage:
+    python convert.py input.docx output.pptx
+
+Le fichier template_CVA.pptx doit être présent dans le même dossier.
+"""
+
 import sys
 import os
 from docx import Document
@@ -11,10 +31,11 @@ from pptx.enum.shapes import MSO_SHAPE_TYPE
 from pptx.enum.text import PP_ALIGN, MSO_ANCHOR, MSO_AUTO_SIZE
 from pptx.dml.color import RGBColor
 
+# Conversion pixels vers pouces (96 pixels = 1 pouce)
 def px_to_inch(px):
-    """Conversion des pixels en pouces"""
     return float(px) / 96.0
 
+# Définition des zones de positionnement
 TITLE_ZONE = {
     "x": Inches(px_to_inch(76)),
     "y": Inches(px_to_inch(35)),
@@ -36,157 +57,208 @@ CONTENT_ZONE = {
     "height": Inches(max(px_to_inch(425), 1))
 }
 
-def is_list_paragraph(paragraph):
-    """Détermine si un paragraphe est une liste à puces ou numérotée"""
-    try:
-        style_name = paragraph.style.name.lower()
-        return 'list' in style_name or 'bullet' in style_name or 'number' in style_name
-    except:
-        return False
-
-def get_paragraph_format(paragraph):
-    """Extrait le formatage d'un paragraphe"""
-    format_data = {
-        "text": paragraph.text,
-        "is_list": is_list_paragraph(paragraph),
-        "level": 0,
-        "runs": []
-    }
+def add_formatted_paragraph(paragraph, content, number_counters=None):
+    """
+    Ajoute et formate un paragraphe dans une zone de texte PowerPoint.
     
-    # Détection du niveau d'indentation
-    try:
-        if paragraph.paragraph_format.left_indent:
-            format_data["level"] = int(paragraph.paragraph_format.left_indent.pt / 36)
-    except:
-        pass
+    Args:
+        paragraph: Paragraphe PowerPoint à formater
+        content: Dictionnaire contenant le texte et les informations de style
+        number_counters: Dictionnaire pour suivre la numérotation par niveau
+    """
+    if number_counters is None:
+        number_counters = {}
+        
+    level = content.get("level", 0)
+    prefix = ""
     
-    # Extraction du formatage des runs
-    for run in paragraph.runs:
-        run_format = {
-            "text": run.text,
-            "bold": bool(run.bold),
-            "italic": bool(run.italic),
-            "underline": bool(run.underline)
-        }
-        format_data["runs"].append(run_format)
-    
-    return format_data
-
-def create_text_shape(slide, text, left, top, width, height, font_name="Arial", 
-                     font_size=11, bold=False, level=0):
-    """Crée une forme de texte sur la slide"""
-    shape = slide.shapes.add_textbox(left, top, width, height)
-    text_frame = shape.text_frame
-    text_frame.word_wrap = True
-    text_frame.margin_left = text_frame.margin_right = Inches(0.1)
-    
-    p = text_frame.paragraphs[0]
-    
-    # Ajout du texte avec indentation si nécessaire
-    indent = "    " * level
-    p.text = f"{indent}{text}"
-    
-    # Application des styles
-    p.font.name = font_name
-    p.font.size = Pt(font_size)
-    p.font.bold = bold
-    
-    return shape
-
-def add_formatted_paragraph(slide, format_data, left, top, width, height):
-    """Ajoute un paragraphe formaté à la slide"""
-    shape = slide.shapes.add_textbox(left, top, width, height)
-    text_frame = shape.text_frame
-    text_frame.word_wrap = True
-    
-    p = text_frame.paragraphs[0]
-    p.text = ""
-    
-    # Ajout des puces si nécessaire
-    if format_data["is_list"]:
-        indent = "    " * format_data["level"]
-        prefix = f"{indent}• "
-    else:
-        prefix = ""
+    # Gestion des listes (puces et numérotation)
+    if content.get("list_type"):
+        paragraph.level = level
+        indent = "    " * level
+        
+        if content["list_type"] == "bullet":
+            prefix = f"{indent}• "
+        else:  # Liste numérotée
+            if level not in number_counters:
+                number_counters[level] = 0
+            number_counters[level] += 1
+            # Réinitialisation des compteurs des niveaux supérieurs
+            higher_levels = [l for l in number_counters.keys() if l > level]
+            for l in higher_levels:
+                number_counters[l] = 0
+            prefix = f"{indent}{number_counters[level]}. "
     
     # Application du formatage par runs
-    if format_data["runs"]:
-        first = True
-        for run_format in format_data["runs"]:
-            run = p.add_run()
-            if first:
+    runs = content.get("runs", [])
+    if runs:
+        first_run = True
+        for run_format in runs:
+            run = paragraph.add_run()
+            if first_run:
                 run.text = prefix + run_format["text"]
-                first = False
+                first_run = False
             else:
                 run.text = run_format["text"]
             
             run.font.name = "Arial"
             run.font.size = Pt(11)
-            run.font.bold = run_format["bold"]
-            run.font.italic = run_format["italic"]
-            run.font.underline = run_format["underline"]
+            run.font.bold = run_format.get("bold", False)
+            run.font.italic = run_format.get("italic", False)
+            run.font.underline = run_format.get("underline", False)
     else:
-        p.text = prefix + format_data["text"]
-        p.font.name = "Arial"
-        p.font.size = Pt(11)
+        paragraph.text = prefix + content["text"]
+        paragraph.font.name = "Arial"
+        paragraph.font.size = Pt(11)
+
+def add_text_box(slide, text, zone, font_size=11, bold=False):
+    """
+    Ajoute une zone de texte à une slide PowerPoint.
+    
+    Args:
+        slide: Slide PowerPoint
+        text: Texte à ajouter
+        zone: Dictionnaire avec x, y, width, height en pouces
+        font_size: Taille de la police (défaut: 11)
+        bold: Texte en gras (défaut: False)
+    
+    Returns:
+        Shape: La forme créée
+    """
+    shape = slide.shapes.add_textbox(
+        zone["x"], zone["y"],
+        zone["width"], zone["height"]
+    )
+    text_frame = shape.text_frame
+    text_frame.word_wrap = True
+    text_frame.margin_left = text_frame.margin_right = Inches(0.1)
+    
+    p = text_frame.paragraphs[0]
+    p.text = text
+    p.font.name = "Arial"
+    p.font.size = Pt(font_size)
+    p.font.bold = bold
     
     return shape
 
-def add_table_to_slide(slide, table, left, top, width, height):
-    """Ajoute un tableau à la slide"""
-    rows = len(table.rows)
-    cols = len(table.columns)
+def add_table(slide, table, left, top, width, height):
+    """
+    Ajoute un tableau à une slide PowerPoint.
     
-    shape = slide.shapes.add_table(rows, cols, left, top, width, height)
-    ppt_table = shape.table
+    Args:
+        slide: Slide PowerPoint
+        table: Tableau Word à copier
+        left, top: Position en pouces
+        width, height: Dimensions en pouces
     
-    # Copie du contenu et formatage
+    Returns:
+        Shape: Le tableau créé
+    """
+    shape = slide.shapes.add_table(
+        len(table.rows), len(table.columns),
+        left, top, width, height
+    )
+    
     for i, row in enumerate(table.rows):
         for j, cell in enumerate(row.cells):
-            target_cell = ppt_table.cell(i, j)
+            target_cell = shape.table.cell(i, j)
             target_cell.text = cell.text
             
-            # Application du style
             for paragraph in target_cell.text_frame.paragraphs:
                 paragraph.font.name = "Arial"
                 paragraph.font.size = Pt(10)
-                if i == 0:  # En-tête en gras
+                if i == 0:  # Première ligne en gras
                     paragraph.font.bold = True
     
     return shape
 
+def create_slide(prs, slide_data):
+    """
+    Crée une slide PowerPoint complète avec tous ses éléments.
+    
+    Args:
+        prs: Présentation PowerPoint
+        slide_data: Dictionnaire contenant les données de la slide
+    
+    Returns:
+        Slide: La slide créée
+    """
+    # Sélection du layout
+    layout = next((l for l in prs.slide_layouts if l.name == 'Blank'), 
+                 prs.slide_layouts[0])
+    slide = prs.slides.add_slide(layout)
+    
+    # Ajout du titre
+    add_text_box(slide, slide_data["title"], TITLE_ZONE, font_size=22, bold=True)
+    
+    # Ajout du sous-titre
+    add_text_box(slide, slide_data["subtitle"], SUBTITLE_ZONE, font_size=18)
+    
+    # Zone de contenu
+    if slide_data["content"]:
+        content_box = slide.shapes.add_textbox(
+            CONTENT_ZONE["x"], CONTENT_ZONE["y"],
+            CONTENT_ZONE["width"], CONTENT_ZONE["height"]
+        )
+        text_frame = content_box.text_frame
+        text_frame.word_wrap = True
+        text_frame.margin_left = text_frame.margin_right = Inches(0.1)
+        
+        number_counters = {}
+        first = True
+        
+        for content in slide_data["content"]:
+            if first:
+                p = text_frame.paragraphs[0]
+                first = False
+            else:
+                p = text_frame.add_paragraph()
+            add_formatted_paragraph(p, content, number_counters)
+        
+        # Position Y pour les tableaux
+        current_y = CONTENT_ZONE["y"] + content_box.height + Inches(0.2)
+    else:
+        current_y = CONTENT_ZONE["y"]
+    
+    # Ajout des tableaux
+    for table in slide_data["tables"]:
+        if current_y + Inches(1) > (CONTENT_ZONE["y"] + CONTENT_ZONE["height"]):
+            print(f"Warning: Espace insuffisant pour un tableau dans la slide")
+            break
+            
+        height = Inches(len(table.rows) * 0.3)
+        add_table(
+            slide, table,
+            CONTENT_ZONE["x"], current_y,
+            CONTENT_ZONE["width"], height
+        )
+        current_y += height + Inches(0.2)
+    
+    return slide
+
 def parse_word_document(doc_path):
-    """Parse le document Word et extrait les slides avec leur contenu"""
+    """
+    Parse le document Word et extrait les données de chaque slide.
+    
+    Args:
+        doc_path: Chemin vers le fichier Word
+    
+    Returns:
+        List: Liste des slides avec leur contenu
+    """
     doc = Document(doc_path)
     slides_data = []
     current_slide = None
-    all_elements = []
-    current_slide_index = -1
     
-    # Collecte tous les éléments (paragraphes et tableaux) dans l'ordre
-    for element in doc.paragraphs:
-        all_elements.append(('paragraph', element))
-    for table in doc.tables:
-        # On insère le tableau à sa position relative par rapport aux paragraphes
-        table_index = doc.element.body.index(table._element)
-        # Trouver la bonne position dans all_elements
-        insert_pos = 0
-        for i, (elem_type, elem) in enumerate(all_elements):
-            if elem_type == 'paragraph':
-                if doc.element.body.index(elem._element) > table_index:
-                    insert_pos = i
-                    break
-        all_elements.insert(insert_pos, ('table', table))
-    
-    # Traitement des éléments dans l'ordre
-    for elem_type, element in all_elements:
-        if elem_type == 'paragraph':
-            text = element.text.strip()
+    for element in doc.element.body:
+        if element.tag.endswith('p'):
+            paragraph = doc.paragraphs[len(doc.paragraphs)-1]
+            text = paragraph.text.strip()
+            
             if not text:
                 continue
-            
+                
             if text.upper().startswith("SLIDE"):
-                current_slide_index += 1
                 if current_slide is not None:
                     slides_data.append(current_slide)
                 current_slide = {
@@ -201,44 +273,49 @@ def parse_word_document(doc_path):
                 elif text.startswith("Sous-titre / Message clé :"):
                     current_slide["subtitle"] = text[len("Sous-titre / Message clé :"):].strip()
                 else:
-                    # Analyse détaillée du formatage
-                    para_format = {
+                    # Analyse du style du paragraphe
+                    style_info = {
                         "text": text,
-                        "style": element.style.name,
                         "level": 0,
                         "list_type": None,
                         "runs": []
                     }
                     
-                    # Détection du type de liste et du niveau
-                    if element._element.pPr is not None:
-                        if element._element.pPr.numPr is not None:
-                            ilvl = element._element.pPr.numPr.ilvl
-                            if ilvl is not None:
-                                para_format["level"] = ilvl.val
-                            
-                            # Détermine si c'est une puce ou une numérotation
-                            numId = element._element.pPr.numPr.numId
-                            if numId is not None:
-                                if numId.val in [1, 2]:  # Valeurs courantes pour les puces
-                                    para_format["list_type"] = "bullet"
-                                else:
-                                    para_format["list_type"] = "number"
+                    # Détection du style de liste
+                    try:
+                        if paragraph._element.pPr is not None:
+                            if paragraph._element.pPr.numPr is not None:
+                                ilvl = paragraph._element.pPr.numPr.ilvl
+                                if ilvl is not None:
+                                    style_info["level"] = ilvl.val
+                                
+                                numId = paragraph._element.pPr.numPr.numId
+                                if numId is not None:
+                                    if numId.val in [1, 2]:  # Valeurs courantes pour les puces
+                                        style_info["list_type"] = "bullet"
+                                    else:
+                                        style_info["list_type"] = "number"
+                    except:
+                        pass
                     
                     # Capture du formatage des runs
-                    for run in element.runs:
-                        run_format = {
+                    for run in paragraph.runs:
+                        run_info = {
                             "text": run.text,
                             "bold": bool(run.bold),
                             "italic": bool(run.italic),
                             "underline": bool(run.underline)
                         }
-                        para_format["runs"].append(run_format)
+                        style_info["runs"].append(run_info)
                     
-                    current_slide["content"].append(para_format)
+                    current_slide["content"].append(style_info)
                     
-        elif elem_type == 'table' and current_slide is not None:
-            current_slide["tables"].append(element)
+        elif element.tag.endswith('tbl'):
+            if current_slide is not None:
+                # Récupération de l'index correct du tableau
+                idx = len([e for e in doc.element.body[:doc.element.body.index(element)]
+                         if e.tag.endswith('tbl')])
+                current_slide["tables"].append(doc.tables[idx])
     
     # Ajout de la dernière slide
     if current_slide is not None:
@@ -246,108 +323,24 @@ def parse_word_document(doc_path):
     
     return slides_data
 
-def create_slide(prs, slide_data):
-    """Crée une slide avec son contenu"""
-    # Sélection du layout
-    layout = next((layout for layout in prs.slide_layouts if layout.name == 'Blank'), 
-                 prs.slide_layouts[0])
+def main(input_docx, template_pptx, output_pptx):
+    """
+    Fonction principale de conversion Word vers PowerPoint.
     
-    slide = prs.slides.add_slide(layout)
-    
-    # Ajout du titre
-    create_text_shape(
-        slide, slide_data["title"],
-        TITLE_ZONE["x"], TITLE_ZONE["y"],
-        TITLE_ZONE["width"], TITLE_ZONE["height"],
-        font_size=22, bold=True
-    )
-    
-    # Ajout du sous-titre
-    create_text_shape(
-        slide, slide_data["subtitle"],
-        SUBTITLE_ZONE["x"], SUBTITLE_ZONE["y"],
-        SUBTITLE_ZONE["width"], SUBTITLE_ZONE["height"],
-        font_size=18
-    )
-    
-    # Création d'une unique zone de contenu pour tous les paragraphes
-    if slide_data["content"]:
-        content_shape = slide.shapes.add_textbox(
-            CONTENT_ZONE["x"], CONTENT_ZONE["y"],
-            CONTENT_ZONE["width"], CONTENT_ZONE["height"]
-        )
-        text_frame = content_shape.text_frame
-        text_frame.word_wrap = True
-        text_frame.margin_left = text_frame.margin_right = Inches(0.1)
-        
-        # Dictionnaire pour suivre les compteurs de numérotation par niveau
-        number_counters = {}
-        
-        # Ajout de chaque paragraphe dans la même zone de texte
-        first_paragraph = True
-        for content in slide_data["content"]:
-            if not first_paragraph:
-                paragraph = text_frame.add_paragraph()
-            else:
-                paragraph = text_frame.paragraphs[0]
-                first_paragraph = False
-            
-            format_paragraph_content(paragraph, text_frame, content, number_counters)
-    
-    # Position pour les tableaux
-    current_y = CONTENT_ZONE["y"]
-    if slide_data["content"]:
-        current_y += content_shape.height + Inches(0.2)
-    
-    # Ajout des tableaux
-    for table in slide_data["tables"]:
-        if current_y + Inches(1) > (CONTENT_ZONE["y"] + CONTENT_ZONE["height"]):
-            print(f"Warning: Espace insuffisant pour un tableau dans la slide")
-            break
-        
-        height = Inches(len(table.rows) * 0.3)
-        shape = add_table_to_slide(
-            slide, table,
-            CONTENT_ZONE["x"], current_y,
-            CONTENT_ZONE["width"], height
-        )
-        current_y += height + Inches(0.2)
-    
-    return slide
-    
-    # Position pour les tableaux
-    current_y = CONTENT_ZONE["y"]
-    if slide_data["content"]:
-        # Ajuster current_y en fonction de la hauteur du contenu texte
-        current_y += content_shape.height + Inches(0.2)
-    
-    # Ajout des tableaux
-    for table in slide_data["tables"]:
-        if current_y + Inches(1) > (CONTENT_ZONE["y"] + CONTENT_ZONE["height"]):
-            print(f"Warning: Espace insuffisant pour un tableau dans la slide")
-            break
-        
-        height = Inches(len(table.rows) * 0.3)
-        shape = add_table_to_slide(
-            slide, table,
-            CONTENT_ZONE["x"], current_y,
-            CONTENT_ZONE["width"], height
-        )
-        current_y += height + Inches(0.2)
-    
-    return slide
-
-def create_ppt_from_docx(input_docx, template_pptx, output_pptx):
-    """Fonction principale de conversion"""
+    Args:
+        input_docx: Chemin du fichier Word source
+        template_pptx: Chemin du template PowerPoint
+        output_pptx: Chemin du fichier PowerPoint de sortie
+    """
     print("\nValidation des fichiers...")
     if not os.path.exists(input_docx):
-        raise FileNotFoundError(f"Le fichier Word {input_docx} n'existe pas.")
+        raise FileNotFoundError(f"Fichier Word non trouvé: {input_docx}")
     if not os.path.exists(template_pptx):
-        raise FileNotFoundError(f"Le template PowerPoint {template_pptx} n'existe pas.")
+        raise FileNotFoundError(f"Template PowerPoint non trouvé: {template_pptx}")
     
     print("\nChargement du template PowerPoint...")
     prs = Presentation(template_pptx)
-    print("Layouts disponibles dans le template:")
+    print("Layouts disponibles:")
     for i, layout in enumerate(prs.slide_layouts):
         print(f" - Layout {i}: {layout.name}")
     
@@ -367,7 +360,7 @@ def create_ppt_from_docx(input_docx, template_pptx, output_pptx):
     
     print("\nSauvegarde de la présentation...")
     prs.save(output_pptx)
-    print(f"Conversion terminée ! Le fichier a été sauvegardé sous : {output_pptx}")
+    print(f"Conversion terminée ! Fichier sauvegardé : {output_pptx}")
 
 if __name__ == "__main__":
     if len(sys.argv) != 3:
@@ -379,7 +372,6 @@ if __name__ == "__main__":
         output_pptx = sys.argv[2]
         template_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "template_CVA.pptx")
         
-        create_ppt_from_docx(input_docx, template_file, output_pptx)
+        main(input_docx, template_file, output_pptx)
     except Exception as e:
-        print(f"Erreur lors de la conversion : {str(e)}")
-        sys.exit(1)
+        print(f"Erreur lors de la
