@@ -156,53 +156,93 @@ def add_table_to_slide(slide, table, left, top, width, height):
     return shape
 
 def parse_word_document(doc_path):
-    """Parse le document Word et extrait les slides"""
+    """Parse le document Word et extrait les slides avec leur contenu"""
     doc = Document(doc_path)
     slides_data = []
     current_slide = None
+    all_elements = []
+    current_slide_index = -1
     
-    # Parcours des paragraphes
-    for paragraph in doc.paragraphs:
-        text = paragraph.text.strip()
-        if not text:
-            continue
-        
-        if text.upper().startswith("SLIDE"):
-            if current_slide is not None:
-                slides_data.append(current_slide)
-            current_slide = {
-                "title": "",
-                "subtitle": "",
-                "content": [],
-                "tables": []
-            }
-        elif current_slide is not None:
-            if text.startswith("Titre :"):
-                current_slide["title"] = text[len("Titre :"):].strip()
-            elif text.startswith("Sous-titre / Message clé :"):
-                current_slide["subtitle"] = text[len("Sous-titre / Message clé :"):].strip()
-            else:
-                format_data = get_paragraph_format(paragraph)
-                current_slide["content"].append(format_data)
+    # Collecte tous les éléments (paragraphes et tableaux) dans l'ordre
+    for element in doc.paragraphs:
+        all_elements.append(('paragraph', element))
+    for table in doc.tables:
+        # On insère le tableau à sa position relative par rapport aux paragraphes
+        table_index = doc.element.body.index(table._element)
+        # Trouver la bonne position dans all_elements
+        insert_pos = 0
+        for i, (elem_type, elem) in enumerate(all_elements):
+            if elem_type == 'paragraph':
+                if doc.element.body.index(elem._element) > table_index:
+                    insert_pos = i
+                    break
+        all_elements.insert(insert_pos, ('table', table))
+    
+    # Traitement des éléments dans l'ordre
+    for elem_type, element in all_elements:
+        if elem_type == 'paragraph':
+            text = element.text.strip()
+            if not text:
+                continue
+            
+            if text.upper().startswith("SLIDE"):
+                current_slide_index += 1
+                if current_slide is not None:
+                    slides_data.append(current_slide)
+                current_slide = {
+                    "title": "",
+                    "subtitle": "",
+                    "content": [],
+                    "tables": []
+                }
+            elif current_slide is not None:
+                if text.startswith("Titre :"):
+                    current_slide["title"] = text[len("Titre :"):].strip()
+                elif text.startswith("Sous-titre / Message clé :"):
+                    current_slide["subtitle"] = text[len("Sous-titre / Message clé :"):].strip()
+                else:
+                    # Analyse détaillée du formatage
+                    para_format = {
+                        "text": text,
+                        "style": element.style.name,
+                        "level": 0,
+                        "list_type": None,
+                        "runs": []
+                    }
+                    
+                    # Détection du type de liste et du niveau
+                    if element._element.pPr is not None:
+                        if element._element.pPr.numPr is not None:
+                            ilvl = element._element.pPr.numPr.ilvl
+                            if ilvl is not None:
+                                para_format["level"] = ilvl.val
+                            
+                            # Détermine si c'est une puce ou une numérotation
+                            numId = element._element.pPr.numPr.numId
+                            if numId is not None:
+                                if numId.val in [1, 2]:  # Valeurs courantes pour les puces
+                                    para_format["list_type"] = "bullet"
+                                else:
+                                    para_format["list_type"] = "number"
+                    
+                    # Capture du formatage des runs
+                    for run in element.runs:
+                        run_format = {
+                            "text": run.text,
+                            "bold": bool(run.bold),
+                            "italic": bool(run.italic),
+                            "underline": bool(run.underline)
+                        }
+                        para_format["runs"].append(run_format)
+                    
+                    current_slide["content"].append(para_format)
+                    
+        elif elem_type == 'table' and current_slide is not None:
+            current_slide["tables"].append(element)
     
     # Ajout de la dernière slide
     if current_slide is not None:
         slides_data.append(current_slide)
-    
-    # Ajout des tableaux aux slides appropriées
-    current_slide_index = 0
-    for table in doc.tables:
-        if current_slide_index < len(slides_data):
-            slides_data[current_slide_index]["tables"].append(table)
-    
-    # Log des informations
-    print(f"\nNombre total de slides trouvées : {len(slides_data)}")
-    for i, slide in enumerate(slides_data):
-        print(f"\nSlide {i+1}:")
-        print(f"  Titre: {slide['title'][:50]}")
-        print(f"  Sous-titre: {slide['subtitle'][:50]}")
-        print(f"  Nombre de paragraphes: {len(slide['content'])}")
-        print(f"  Nombre de tableaux: {len(slide['tables'])}")
     
     return slides_data
 
@@ -230,17 +270,67 @@ def create_slide(prs, slide_data):
         font_size=18
     )
     
-    # Position initiale pour le contenu
-    current_y = CONTENT_ZONE["y"]
-    
-    # Ajout du contenu
-    for content in slide_data["content"]:
-        shape = add_formatted_paragraph(
-            slide, content,
-            CONTENT_ZONE["x"], current_y,
-            CONTENT_ZONE["width"], Inches(0.3)
+    # Création d'une unique zone de contenu pour tous les paragraphes
+    if slide_data["content"]:
+        content_shape = slide.shapes.add_textbox(
+            CONTENT_ZONE["x"], CONTENT_ZONE["y"],
+            CONTENT_ZONE["width"], CONTENT_ZONE["height"]
         )
-        current_y += Inches(0.3)
+        text_frame = content_shape.text_frame
+        text_frame.word_wrap = True
+        text_frame.margin_left = text_frame.margin_right = Inches(0.1)
+        
+        # Ajout de chaque paragraphe dans la même zone de texte
+        first_paragraph = True
+        for content in slide_data["content"]:
+            if not first_paragraph:
+                paragraph = text_frame.add_paragraph()
+            else:
+                paragraph = text_frame.paragraphs[0]
+                first_paragraph = False
+            
+            # Application du style de liste
+            if content["list_type"]:
+                paragraph.level = content["level"]
+                prefix = ""
+                if content["list_type"] == "bullet":
+                    prefix = "• "
+                elif content["list_type"] == "number":
+                    prefix = f"{paragraph._index + 1}. "
+                
+                # Indentation en fonction du niveau
+                indent = "    " * content["level"]
+                prefix = indent + prefix
+            else:
+                prefix = ""
+            
+            # Ajout des runs avec leur formatage
+            if content["runs"]:
+                # Premier run avec préfixe si nécessaire
+                first_run = True
+                for run_format in content["runs"]:
+                    run = paragraph.add_run()
+                    if first_run and prefix:
+                        run.text = prefix + run_format["text"]
+                        first_run = False
+                    else:
+                        run.text = run_format["text"]
+                    
+                    run.font.name = "Arial"
+                    run.font.size = Pt(11)
+                    run.font.bold = run_format["bold"]
+                    run.font.italic = run_format["italic"]
+                    run.font.underline = run_format["underline"]
+            else:
+                paragraph.text = prefix + content["text"]
+                paragraph.font.name = "Arial"
+                paragraph.font.size = Pt(11)
+    
+    # Position pour les tableaux
+    current_y = CONTENT_ZONE["y"]
+    if slide_data["content"]:
+        # Ajuster current_y en fonction de la hauteur du contenu texte
+        current_y += content_shape.height + Inches(0.2)
     
     # Ajout des tableaux
     for table in slide_data["tables"]:
