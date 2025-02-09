@@ -5,29 +5,30 @@ Conversion d'un document Word (.docx) en présentation PowerPoint (.pptx)
 en utilisant un template existant (template_CVA.pptx) comme arrière-plan.
 
 Le document Word doit être structuré ainsi :
-  • Chaque slide commence par une ligne "SLIDE X"
-  • Une ligne "Titre :" donne le titre de la slide
-  • Une ligne "Sous-titre / Message clé :" donne le sous-titre
+  • Chaque slide commence par "SLIDE X"
+  • Une ligne "Titre :" indique le titre
+  • Une ligne "Sous-titre / Message clé :" indique le sous-titre
   • Le reste (paragraphes, listes, tableaux) constitue le contenu
 
-Pour chaque slide, le script crée une diapositive (à partir d'un layout Blank) et y ajoute trois zones de texte
-aux positions précises définies ci-dessous (les valeurs sont en pixels et converties en pouces, en supposant 96 px/inch):
+Le script crée pour chaque slide une diapositive à partir d'un layout Blank,
+puis y ajoute trois zones de texte positionnées selon les coordonnées définies
+(ci-dessous, en pixels convertis en pouces, avec 96 px/inch) :
 
-  title_zone:    { x: 76, y: 35, width: 1382, height: 70 }
-  subtitle_zone: { x: 76, y: 119, width: 1382, height: 56 }
-  content_zone:  { x: 76, y: 189, width: 1382, height: 425 }
+  title_zone:    { x: 76,  y: 35,  width: 1382, height: 70 }
+  subtitle_zone: { x: 76,  y: 119, width: 1382, height: 56 }
+  content_zone:  { x: 76,  y: 189, width: 1382, height: 425 }
 
 Les styles forcés sont :
-  - Titre : Arial, taille 22 pts en gras (auto-ajusté via fit_text(max_size=22))
-  - Sous-titre : Arial, taille 18 pts non gras (auto-ajusté via fit_text(max_size=18))
-  - Contenu : Arial, taille 11 pts (auto-ajusté via fit_text(max_size=11))
-    • Les paragraphes conservent puces, numérotation et retraits.
-  - Tableaux : les cellules sont en Arial, taille 10 pts, et la première ligne (en-tête) est en gras.
+  - Titre : Arial, taille 22 pts en gras (auto-ajusté entre 22 et 16 pts)
+  - Sous-titre : Arial, taille 18 pts non gras (auto-ajusté entre 18 et 14 pts)
+  - Contenu : Arial, taille 11 pts (auto-ajusté entre 11 et 9 pts)
+    • Les paragraphes conservent les puces, numérotation et retraits.
+  - Tableaux : Le texte est en Arial, taille 10 pts (la première ligne en gras).
 
 Usage :
   python convert.py input.docx output.pptx
 
-Le fichier template_CVA.pptx (contenant au moins un layout Blank) doit être dans le même dossier que ce script.
+Le fichier template_CVA.pptx (contenant au moins un layout Blank) doit être dans le même dossier.
 """
 
 import sys
@@ -61,7 +62,15 @@ CONTENT_ZONE = {
 }
 
 # ------------------------------------------------------------------------------
-# Itération sur les éléments bloc (paragraphes et tableaux)
+# Supprime toutes les diapositives existantes dans la présentation
+# ------------------------------------------------------------------------------
+def remove_all_slides(prs):
+    sldIdLst = prs.slides._sldIdLst
+    for sldId in list(sldIdLst):
+        sldIdLst.remove(sldId)
+
+# ------------------------------------------------------------------------------
+# Itération sur les éléments bloc (paragraphes et tableaux) dans le document Word
 # ------------------------------------------------------------------------------
 def iter_block_items(parent):
     from docx.oxml.ns import qn
@@ -75,7 +84,7 @@ def iter_block_items(parent):
             yield Table(child, parent)
 
 # ------------------------------------------------------------------------------
-# Extraction du contenu Word en slides
+# Extraction du contenu du Word en slides
 # ------------------------------------------------------------------------------
 def parse_docx_to_slides(doc_path):
     doc = Document(doc_path)
@@ -102,12 +111,10 @@ def parse_docx_to_slides(doc_path):
             if current_slide is not None:
                 current_slide["blocks"].append(("paragraph", block))
         else:
-            # Traitement des tableaux
             if current_slide is not None:
                 current_slide["blocks"].append(("table", block))
     if current_slide is not None:
         slides_data.append(current_slide)
-    # Affichage de debug
     print("Contenu extrait du Word:")
     for i, s in enumerate(slides_data):
         print(f"Slide {i}: Titre='{s['title']}', Sous-titre='{s['subtitle']}', Nb blocs={len(s['blocks'])}")
@@ -222,10 +229,9 @@ def add_content_blocks(slide, blocks, zone):
             current_top += height + spacing
 
 # ------------------------------------------------------------------------------
-# Création d'une slide pour chaque slide du Word (même template pour tous)
+# Création d'une slide pour chaque slide du Word (utilise un layout Blank)
 # ------------------------------------------------------------------------------
 def add_slide_with_text(prs, slide_data):
-    # Utiliser un layout Blank
     blank_layout = None
     for layout in prs.slide_layouts:
         if "Blank" in layout.name:
@@ -272,6 +278,9 @@ def add_slide_with_text(prs, slide_data):
 def create_ppt_from_docx(input_docx, template_pptx, output_pptx):
     slides_data = parse_docx_to_slides(input_docx)
     prs = Presentation(template_pptx)
+    # Supprimer toutes les diapositives existantes dans le template
+    remove_all_slides(prs)
+    
     if slides_data:
         for slide_data in slides_data:
             add_slide_with_text(prs, slide_data)
@@ -280,6 +289,14 @@ def create_ppt_from_docx(input_docx, template_pptx, output_pptx):
     
     prs.save(output_pptx)
     print("Conversion terminée :", output_pptx)
+
+# ------------------------------------------------------------------------------
+# Fonction pour supprimer toutes les diapositives existantes dans le template
+# ------------------------------------------------------------------------------
+def remove_all_slides(prs):
+    sldIdLst = prs.slides._sldIdLst
+    for sldId in list(sldIdLst):
+        sldIdLst.remove(sldId)
 
 # ------------------------------------------------------------------------------
 # Point d'entrée
