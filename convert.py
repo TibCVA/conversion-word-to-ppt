@@ -3,27 +3,25 @@
 """
 Conversion d'un document Word (.docx) en présentation PowerPoint (.pptx)
 en utilisant un template existant (template_CVA.pptx) comme arrière-plan.
-
 Le document Word doit être structuré ainsi :
-  • Chaque slide commence par une ligne "SLIDE X"
-  • Une ligne "Titre :" indique le titre de la slide
+  • Chaque slide commence par "SLIDE X"
+  • Une ligne "Titre :" indique le titre
   • Une ligne "Sous-titre / Message clé :" indique le sous-titre
   • Le reste (paragraphes, listes, tableaux) constitue le contenu
 
 Pour chaque slide, le script crée une diapositive à partir d'un layout Blank
-et y ajoute trois zones de texte aux positions précises (les coordonnées ci‑dessous,
-fournies en pixels, sont converties en pouces, en supposant 96 px par pouce) :
+et y ajoute trois zones de texte positionnées précisément selon ces coordonnées (en pixels convertis en pouces, avec 96px/inch):
 
   title_zone:    { x: 76, y: 35, width: 1382, height: 70 }
   subtitle_zone: { x: 76, y: 119, width: 1382, height: 56 }
   content_zone:  { x: 76, y: 189, width: 1382, height: 425 }
 
 Les styles forcés sont :
-  - Titre : Arial, taille 22 pts en gras (auto-ajusté entre 22 et 16 pts)
-  - Sous-titre : Arial, taille 18 pts non gras (auto-ajusté entre 18 et 14 pts)
-  - Contenu : Arial, taille 11 pts (auto-ajusté entre 11 et 9 pts)
-    • Les paragraphes conservent les puces, numérotations et retraits
-  - Tableaux : Le texte est en Arial, taille 10 pts (la première ligne en gras)
+  - Titre : Arial, taille 22 pts en gras (fit_text(max_size=22))
+  - Sous-titre : Arial, taille 18 pts non gras (fit_text(max_size=18))
+  - Contenu : Arial, taille 11 pts (fit_text(max_size=11))
+    • Les paragraphes conservent les puces, numérotations et retraits.
+  - Tableaux : texte en Arial, taille 10 pts (première ligne en gras).
 
 Usage :
   python convert.py input.docx output.pptx
@@ -37,7 +35,7 @@ from docx import Document
 from pptx import Presentation
 from pptx.util import Inches, Pt
 
-# --- Conversion de pixels en pouces (1 pouce = 96 pixels) ---
+# Conversion de pixels en pouces (1 pouce = 96 pixels)
 def px_to_inch(px):
     return px / 96.0
 
@@ -62,47 +60,59 @@ CONTENT_ZONE = {
 }
 
 # ------------------------------------------------------------------------------
-# Fonction de parsing simple (en se basant uniquement sur doc.paragraphs)
+# Itération sur les éléments de niveau bloc (paragraphes et tableaux)
+# ------------------------------------------------------------------------------
+def iter_block_items(parent):
+    from docx.oxml.ns import qn
+    from docx.table import Table
+    from docx.text.paragraph import Paragraph
+    parent_elm = parent.element
+    for child in parent_elm.iterchildren():
+        if child.tag == qn('w:p'):
+            yield Paragraph(child, parent)
+        elif child.tag == qn('w:tbl'):
+            yield Table(child, parent)
+
+# ------------------------------------------------------------------------------
+# Extraction du contenu du Word en slides
 # ------------------------------------------------------------------------------
 def parse_docx_to_slides(doc_path):
-    """
-    Parcourt les paragraphes du document Word.
-    Lorsqu'une ligne commence par "SLIDE", on crée une nouvelle slide.
-    Les lignes commençant par "Titre :" et "Sous-titre / Message clé :" définissent respectivement le titre et le sous-titre.
-    Le reste des paragraphes est ajouté comme contenu (type "paragraph").
-    """
     doc = Document(doc_path)
     slides_data = []
     current_slide = None
 
-    for para in doc.paragraphs:
-        t = para.text.strip()
-        if not t:
-            continue
-        if t.upper().startswith("SLIDE"):
+    for block in iter_block_items(doc):
+        if block.__class__.__name__ == "Paragraph":
+            text = block.text.strip()
+            if not text:
+                continue
+            if text.upper().startswith("SLIDE"):
+                if current_slide is not None:
+                    slides_data.append(current_slide)
+                current_slide = {"title": "", "subtitle": "", "blocks": []}
+                continue
+            if text.startswith("Titre :"):
+                if current_slide is not None:
+                    current_slide["title"] = text[len("Titre :"):].strip()
+                continue
+            if text.startswith("Sous-titre / Message clé :"):
+                if current_slide is not None:
+                    current_slide["subtitle"] = text[len("Sous-titre / Message clé :"):].strip()
+                continue
             if current_slide is not None:
-                slides_data.append(current_slide)
-            current_slide = {"title": "", "subtitle": "", "blocks": []}
-            continue
-        if t.startswith("Titre :"):
+                current_slide["blocks"].append(("paragraph", block))
+        else:
             if current_slide is not None:
-                current_slide["title"] = t[len("Titre :"):].strip()
-            continue
-        if t.startswith("Sous-titre / Message clé :"):
-            if current_slide is not None:
-                current_slide["subtitle"] = t[len("Sous-titre / Message clé :"):].strip()
-            continue
-        if current_slide is not None:
-            current_slide["blocks"].append(("paragraph", para))
+                current_slide["blocks"].append(("table", block))
     if current_slide is not None:
         slides_data.append(current_slide)
     print("Contenu extrait du Word:")
     for i, slide in enumerate(slides_data):
-        print(f"Slide {i}: Titre='{slide['title']}', Sous-titre='{slide['subtitle']}', Nb de blocs={len(slide['blocks'])}")
+        print(f"Slide {i}: Titre='{slide['title']}', Sous-titre='{slide['subtitle']}', Nb blocs={len(slide['blocks'])}")
     return slides_data
 
 # ------------------------------------------------------------------------------
-# Gestion du formatage des paragraphes (copie des runs, puces, etc.)
+# Gestion du formatage pour les paragraphes
 # ------------------------------------------------------------------------------
 def get_list_type(paragraph):
     xml = paragraph._p.xml
@@ -126,7 +136,6 @@ def add_paragraph_with_runs(text_frame, paragraph, counters):
     new_p.level = get_indentation_level(paragraph)
     style = get_list_type(paragraph)
     if style == "bullet":
-        # Ajout du symbole bullet
         r = new_p.add_run()
         r.text = "• "
         r.font.name = "Arial"
@@ -166,7 +175,7 @@ def add_paragraph_with_runs(text_frame, paragraph, counters):
     return new_p
 
 # ------------------------------------------------------------------------------
-# Insertion d'un tableau depuis le Word dans la slide PowerPoint
+# Insertion d'un tableau dans la slide PowerPoint
 # ------------------------------------------------------------------------------
 def insert_table_in_slide(slide, table, left, top, width, height):
     rows = len(table.rows)
@@ -186,32 +195,32 @@ def insert_table_in_slide(slide, table, left, top, width, height):
     return shape
 
 # ------------------------------------------------------------------------------
-# Insertion des blocs (paragraphes ET tableaux) dans la zone de contenu
+# Insertion des blocs (paragraphes et tableaux) dans la zone de contenu
 # ------------------------------------------------------------------------------
 def add_content_blocks(slide, blocks, zone):
     current_top = zone["y"]
     spacing = Inches(0.2)
     for block_type, block in blocks:
         if block_type == "paragraph":
-            height = Inches(0.5)  # hauteur approximative pour un paragraphe
+            height = Inches(0.5)
             tb = slide.shapes.add_textbox(zone["x"], current_top, zone["width"], height)
             tf = tb.text_frame
             tf.clear()
             counters = {}
             add_paragraph_with_runs(tf, block, counters)
             try:
-                tf.fit_text(max_size=11, min_size=9)
+                tf.fit_text(max_size=11)  # Ajustement automatique entre 11 et (libre)
             except Exception as e:
                 print("Erreur fit_text pour paragraphe:", e)
             current_top += height + spacing
         elif block_type == "table":
             rows = len(block.rows)
-            height = Inches(0.3) * rows  # estimation
+            height = Inches(0.3) * rows
             insert_table_in_slide(slide, block, left=zone["x"], top=current_top, width=zone["width"], height=height)
             current_top += height + spacing
 
 # ------------------------------------------------------------------------------
-# Création d'une slide unique (pour chaque slide) en ajoutant des zones de texte
+# Création d'une slide unique pour chaque slide du Word
 # ------------------------------------------------------------------------------
 def add_slide_with_text(prs, slide_data):
     # Utiliser un layout Blank
@@ -232,7 +241,10 @@ def add_slide_with_text(prs, slide_data):
         for r in p.runs:
             r.font.name = "Arial"
             r.font.bold = True
-    title_tf.fit_text(max_size=22, min_size=16)
+    try:
+        title_tf.fit_text(max_size=22)
+    except Exception as e:
+        print("Erreur fit_text pour le titre:", e)
     
     # Zone de sous-titre
     subtitle_box = slide.shapes.add_textbox(SUBTITLE_ZONE["x"], SUBTITLE_ZONE["y"], SUBTITLE_ZONE["width"], SUBTITLE_ZONE["height"])
@@ -242,7 +254,10 @@ def add_slide_with_text(prs, slide_data):
         for r in p.runs:
             r.font.name = "Arial"
             r.font.bold = False
-    subtitle_tf.fit_text(max_size=18, min_size=14)
+    try:
+        subtitle_tf.fit_text(max_size=18)
+    except Exception as e:
+        print("Erreur fit_text pour le sous-titre:", e)
     
     # Zone de contenu
     add_content_blocks(slide, slide_data["blocks"], CONTENT_ZONE)
@@ -254,9 +269,7 @@ def add_slide_with_text(prs, slide_data):
 # ------------------------------------------------------------------------------
 def create_ppt_from_docx(input_docx, template_pptx, output_pptx):
     slides_data = parse_docx_to_slides(input_docx)
-    # Ouvrir le template pour récupérer le fond et les styles
-    prs = Presentation(template_pptx)
-    
+    prs = Presentation(template_pptx)  # Utilise le template pour le fond et les styles
     if slides_data:
         for slide_data in slides_data:
             add_slide_with_text(prs, slide_data)
