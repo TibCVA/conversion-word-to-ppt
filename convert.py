@@ -6,13 +6,13 @@ import os
 from docx import Document
 from docx.text.paragraph import Paragraph
 from docx.table import Table
-from docx.oxml.xmlchemy import OxmlElement
 from docx.shared import Pt
 from pptx import Presentation
 from pptx.util import Inches, Pt
 from pptx.enum.shapes import MSO_SHAPE_TYPE
 from pptx.enum.text import PP_ALIGN, MSO_ANCHOR, MSO_AUTO_SIZE
 from pptx.dml.color import RGBColor
+from docx.oxml import NS, OxmlElement
 
 def px_to_inch(px):
     """Conversion précise des pixels en pouces"""
@@ -257,23 +257,96 @@ def create_slide(prs, slide_data):
     """Crée une slide complète avec tous ses éléments"""
     # Recherche du layout approprié
     layout = None
-    
-    # Essaye d'abord de trouver un layout 'Blank'
     for layout_option in prs.slide_layouts:
         if layout_option.name == 'Blank':
             layout = layout_option
             break
     
-    # Si pas de 'Blank', utilise le premier layout disponible
     if layout is None and len(prs.slide_layouts) > 0:
         layout = prs.slide_layouts[0]
         print(f"Layout 'Blank' non trouvé, utilisation du layout '{layout.name}'")
     
-    # Si toujours pas de layout, erreur
     if layout is None:
         raise ValueError("Aucun layout disponible dans le template PowerPoint")
     
     slide = prs.slides.add_slide(layout)
+    
+    # Zone de titre
+    title_box = create_shape_with_text(
+        slide, slide_data["title"],
+        TITLE_ZONE["x"], TITLE_ZONE["y"],
+        TITLE_ZONE["width"], TITLE_ZONE["height"],
+        font_size=22, bold=True
+    )
+    
+    # Zone de sous-titre
+    subtitle_box = create_shape_with_text(
+        slide, slide_data["subtitle"],
+        SUBTITLE_ZONE["x"], SUBTITLE_ZONE["y"],
+        SUBTITLE_ZONE["width"], SUBTITLE_ZONE["height"],
+        font_size=18
+    )
+    
+    # Position initiale pour le contenu
+    current_y = CONTENT_ZONE["y"]
+    
+    # Ajout du contenu avec formatage préservé
+    for content in slide_data["content"]:
+        text_box = slide.shapes.add_textbox(
+            CONTENT_ZONE["x"], current_y,
+            CONTENT_ZONE["width"], Inches(0.3)
+        )
+        tf = text_box.text_frame
+        tf.word_wrap = True
+        
+        p = tf.paragraphs[0]
+        style = content["style"]
+        
+        # Application du formatage des runs
+        if style["runs"]:
+            p.text = ""  # Clear default text
+            for run_data in style["runs"]:
+                run = p.add_run()
+                run.text = run_data["text"]
+                
+                # Application des styles du run
+                if run_data["bold"]:
+                    run.font.bold = True
+                if run_data["italic"]:
+                    run.font.italic = True
+                if run_data["underline"]:
+                    run.font.underline = True
+                if run_data["font_size"]:
+                    run.font.size = Pt(run_data["font_size"])
+                run.font.name = "Arial"
+        else:
+            # Si pas de runs spécifiques, applique le texte directement
+            p.text = content["text"]
+            p.font.size = Pt(11)
+            p.font.name = "Arial"
+        
+        # Ajout des puces/numéros si nécessaire
+        if style["bullet"] or style["number"]:
+            p.level = style["level"]
+            add_bullet_or_number(p, is_bullet=style["bullet"], level=style["level"])
+        
+        current_y += Inches(0.3)
+    
+    # Ajout des tableaux
+    for table in slide_data["tables"]:
+        if current_y + Inches(1) > (CONTENT_ZONE["y"] + CONTENT_ZONE["height"]):
+            print("Warning: Espace insuffisant pour le tableau")
+            break
+            
+        table_height = Inches(len(table.rows) * 0.3)
+        shape = add_table_to_slide(
+            slide, table,
+            CONTENT_ZONE["x"], current_y,
+            CONTENT_ZONE["width"], table_height
+        )
+        current_y += table_height + Inches(0.2)
+    
+    return slide
     
     # Zone de titre
     title_box = create_shape_with_text(
