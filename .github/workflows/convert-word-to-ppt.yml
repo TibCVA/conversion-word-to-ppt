@@ -1,4 +1,4 @@
-name: Convert Word to PPT
+name: Convert Word to PPT using manual textboxes and auto-fit
 
 on:
   push:
@@ -26,7 +26,7 @@ jobs:
 
       - name: Run conversion script
         run: |
-          python convert.py input.docx output.pptx
+          python convert_new.py input.docx output.pptx
 
       - name: Upload PPT as artifact
         uses: actions/upload-artifact@v4
