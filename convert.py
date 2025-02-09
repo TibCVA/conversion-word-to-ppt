@@ -135,47 +135,100 @@ def add_table_to_slide(slide, table, left, top, width, height):
     return shape
 
 def parse_word_content(doc_path):
-    """Parse le contenu Word de manière robuste"""
+    """Parse le contenu Word en préservant tous les styles et la structure"""
     doc = Document(doc_path)
     slides_data = []
     current_slide = None
+    current_slide_index = -1
     
-    for paragraph in doc.paragraphs:
-        text = paragraph.text.strip()
-        if not text:
-            continue
+    # Fonction helper pour analyser le style d'un paragraphe
+    def get_paragraph_style(paragraph):
+        style_data = {
+            "bullet": False,
+            "number": False,
+            "level": 0,
+            "runs": []
+        }
         
-        if text.upper().startswith("SLIDE"):
-            if current_slide is not None:
-                slides_data.append(current_slide)
-            current_slide = {
-                "title": "",
-                "subtitle": "",
-                "content": [],
-                "tables": []
+        # Détection du niveau et type de liste
+        if paragraph._element.pPr is not None:
+            if paragraph._element.pPr.numPr is not None:
+                ilvl = paragraph._element.pPr.numPr.ilvl
+                if ilvl is not None:
+                    style_data["level"] = ilvl.val
+                numId = paragraph._element.pPr.numPr.numId
+                if numId is not None:
+                    # Détermine si c'est une puce ou une numérotation
+                    # en vérifiant le type de liste dans le document
+                    try:
+                        num = doc.part.numbering_part.numbering_definitions._numbering.num_list[0]
+                        abstract_num_id = num.abstractNumId.val
+                        if abstract_num_id == 0:  # Généralement pour les puces
+                            style_data["bullet"] = True
+                        else:
+                            style_data["number"] = True
+                    except:
+                        style_data["bullet"] = True  # Par défaut, on considère que c'est une puce
+        
+        # Capture du formatage de chaque segment de texte
+        for run in paragraph.runs:
+            run_data = {
+                "text": run.text,
+                "bold": run.bold,
+                "italic": run.italic,
+                "underline": run.underline,
+                "font_size": run.font.size.pt if run.font.size else None
             }
-        elif current_slide is not None:
-            if text.startswith("Titre :"):
-                current_slide["title"] = text[len("Titre :"):].strip()
-            elif text.startswith("Sous-titre / Message clé :"):
-                current_slide["subtitle"] = text[len("Sous-titre / Message clé :"):].strip()
-            else:
-                # Détection plus robuste des puces
-                has_bullet = False
-                try:
-                    if paragraph._element.pPr is not None:
-                        if paragraph._element.pPr.numPr is not None or paragraph._element.pPr.pStyle is not None:
-                            has_bullet = True
-                except:
-                    pass
-
-                # Capture des propriétés de formatage
-                para_data = {
-                    "text": text,
-                    "level": paragraph.style.name.split("Heading ")[-1] if "Heading" in paragraph.style.name else "0",
-                    "bullet": has_bullet
+            style_data["runs"].append(run_data)
+        
+        return style_data
+    
+    # Parcours séquentiel du document
+    elements = []
+    for element in doc.element.body:
+        if element.tag.endswith('p'):
+            elements.append(('paragraph', Paragraph(element, doc)))
+        elif element.tag.endswith('tbl'):
+            elements.append(('table', Table(element, doc)))
+    
+    # Analyse des éléments en préservant l'ordre
+    for elem_type, element in elements:
+        if elem_type == 'paragraph':
+            text = element.text.strip()
+            if not text:
+                continue
+            
+            if text.upper().startswith("SLIDE"):
+                current_slide_index += 1
+                if current_slide is not None:
+                    slides_data.append(current_slide)
+                current_slide = {
+                    "title": "",
+                    "subtitle": "",
+                    "content": [],
+                    "tables": []
                 }
-                current_slide["content"].append(para_data)
+            elif current_slide is not None:
+                if text.startswith("Titre :"):
+                    current_slide["title"] = text[len("Titre :"):].strip()
+                elif text.startswith("Sous-titre / Message clé :"):
+                    current_slide["subtitle"] = text[len("Sous-titre / Message clé :"):].strip()
+                else:
+                    style_data = get_paragraph_style(element)
+                    para_data = {
+                        "text": text,
+                        "style": style_data
+                    }
+                    current_slide["content"].append(para_data)
+        
+        elif elem_type == 'table' and current_slide is not None:
+            current_slide["tables"].append(element)
+    
+    if current_slide is not None:
+        slides_data.append(current_slide)
+    
+    print(f"Nombre total de slides analysées : {len(slides_data)}")
+    return slides_data
     
     if current_slide is not None:
         slides_data.append(current_slide)
@@ -216,6 +269,93 @@ def create_slide(prs, slide_data):
         raise ValueError("Aucun layout disponible dans le template PowerPoint")
     
     slide = prs.slides.add_slide(layout)
+    
+    # Zone de titre
+    title_box = create_shape_with_text(
+        slide, slide_data["title"],
+        TITLE_ZONE["x"], TITLE_ZONE["y"],
+        TITLE_ZONE["width"], TITLE_ZONE["height"],
+        font_size=22, bold=True
+    )
+    
+    # Zone de sous-titre
+    subtitle_box = create_shape_with_text(
+        slide, slide_data["subtitle"],
+        SUBTITLE_ZONE["x"], SUBTITLE_ZONE["y"],
+        SUBTITLE_ZONE["width"], SUBTITLE_ZONE["height"],
+        font_size=18
+    )
+    
+    # Position initiale pour le contenu
+    current_y = CONTENT_ZONE["y"]
+    
+    # Ajout du contenu avec formatage préservé
+    for content in slide_data["content"]:
+        text_box = slide.shapes.add_textbox(
+            CONTENT_ZONE["x"], current_y,
+            CONTENT_ZONE["width"], Inches(0.3)
+        )
+        tf = text_box.text_frame
+        tf.word_wrap = True
+        
+        p = tf.paragraphs[0]
+        style = content["style"]
+        
+        # Application du niveau de liste et type de puce
+        if style["bullet"] or style["number"]:
+            p.level = style["level"]
+            if style["bullet"]:
+                try:
+                    p._pPr.get_or_add_pPr().add_pStyle(val='Bullet')
+                    p._pPr.get_or_add_pPr().add_buChar(value='•')
+                except:
+                    print(f"Impossible d'ajouter une puce à : {content['text'][:30]}...")
+            elif style["number"]:
+                try:
+                    p._pPr.get_or_add_pPr().add_pStyle(val='ListNumber')
+                except:
+                    print(f"Impossible d'ajouter une numérotation à : {content['text'][:30]}...")
+        
+        # Application du formatage des runs
+        if style["runs"]:
+            p.text = ""  # Clear default text
+            for run_data in style["runs"]:
+                run = p.add_run()
+                run.text = run_data["text"]
+                
+                # Application des styles du run
+                if run_data["bold"]:
+                    run.font.bold = True
+                if run_data["italic"]:
+                    run.font.italic = True
+                if run_data["underline"]:
+                    run.font.underline = True
+                if run_data["font_size"]:
+                    run.font.size = Pt(run_data["font_size"])
+                run.font.name = "Arial"
+        else:
+            # Si pas de runs spécifiques, applique le texte directement
+            p.text = content["text"]
+            p.font.size = Pt(11)
+            p.font.name = "Arial"
+        
+        current_y += Inches(0.3)
+    
+    # Ajout des tableaux
+    for table in slide_data["tables"]:
+        if current_y + Inches(1) > (CONTENT_ZONE["y"] + CONTENT_ZONE["height"]):
+            print("Warning: Espace insuffisant pour le tableau")
+            break
+            
+        table_height = Inches(len(table.rows) * 0.3)
+        shape = add_table_to_slide(
+            slide, table,
+            CONTENT_ZONE["x"], current_y,
+            CONTENT_ZONE["width"], table_height
+        )
+        current_y += table_height + Inches(0.2)
+    
+    return slide
     
     # Ajout du titre avec dimensions minimales garanties
     title_shape = create_shape_with_text(
