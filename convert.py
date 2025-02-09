@@ -37,12 +37,22 @@ CONTENT_ZONE = {
 }
 
 def validate_template(template_path):
-    """Vérifie que le template est valide et contient un layout Blank"""
+    """Vérifie que le template est valide et contient au moins un layout"""
     try:
         prs = Presentation(template_path)
+        if len(prs.slide_layouts) == 0:
+            print("Erreur: Le template ne contient aucun layout.")
+            return False
+            
+        # Liste les layouts disponibles
+        print("Layouts disponibles dans le template:")
+        for i, layout in enumerate(prs.slide_layouts):
+            print(f"  - Layout {i}: {layout.name}")
+            
         has_blank = any(layout.name == 'Blank' for layout in prs.slide_layouts)
         if not has_blank:
-            print("Attention: Aucun layout 'Blank' trouvé dans le template.")
+            print("Note: Aucun layout 'Blank' trouvé dans le template. Le premier layout disponible sera utilisé.")
+            
         return True
     except Exception as e:
         print(f"Erreur lors de la validation du template: {str(e)}")
@@ -178,11 +188,25 @@ def parse_word_content(doc_path):
 
 def create_slide(prs, slide_data):
     """Crée une slide complète avec tous ses éléments"""
-    # Recherche du layout Blank
-    blank_layout = next((layout for layout in prs.slide_layouts if layout.name == "Blank"), 
-                       prs.slide_layouts[6])
+    # Recherche du layout approprié
+    layout = None
     
-    slide = prs.slides.add_slide(blank_layout)
+    # Essaye d'abord de trouver un layout 'Blank'
+    for layout_option in prs.slide_layouts:
+        if layout_option.name == 'Blank':
+            layout = layout_option
+            break
+    
+    # Si pas de 'Blank', utilise le premier layout disponible
+    if layout is None and len(prs.slide_layouts) > 0:
+        layout = prs.slide_layouts[0]
+        print(f"Layout 'Blank' non trouvé, utilisation du layout '{layout.name}'")
+    
+    # Si toujours pas de layout, erreur
+    if layout is None:
+        raise ValueError("Aucun layout disponible dans le template PowerPoint")
+    
+    slide = prs.slides.add_slide(layout)
     
     # Ajout du titre avec dimensions minimales garanties
     title_shape = create_shape_with_text(
